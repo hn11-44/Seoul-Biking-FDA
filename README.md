@@ -23,9 +23,13 @@ deeming the difference statistcially significant for all of the hours of the day
 # Files 
 
 FDA_final.html -> contains R markdown code in hmtl format
+
 FDA_final.RMD -> conatins code 
+
 Function Data Analysis Report -> report including methodology and discussion or results 
+
 Seoul Bike Rentals Presentation -> a canva presentation of the project 
+
 SeoulBikeData.csv -> the data used for the project. 
 
 
