@@ -1,0 +1,2093 @@
+---
+title: "FDA: Seoul Predicting Bike Rental" 
+author: "HN"
+date: "2024-09-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(readr)
+library(tidyverse)
+library(reshape2)
+library(fda)
+library(fda.usc)
+library(ggplot2)
+library(gridExtra)
+library(fdasrvf)
+library(refund)
+library(depthTools)
+opts_chunk$set(fig.width=20, fig.height=15)
+```
+
+### Introduction 
+
+Functional data are generated from underlying continuous function, where each of the observation are discrete measurements $x_1,..., x_n$ where we assume the data points arise from a smooth function. We are breaking away from the orthodox method of multivariate analysis, where each instance as variable. It would require us to convert the discrete-time measurements to functions, where we would treat each sample unit as a function. 
+
+In this project we will be conducting a functional data analysis with the goal of predicting the demand of bike demand in the city of Seoul, South Korea. The goal of the project is to assess how weather patterns can impact the demand of bike in the city. Furthermore, we will be trying to predict the future demand of bike usage within the city. But as a first order let us load the data set and start exploring. 
+
+```{r, warning = FALSE, message = FALSE}
+# Loading the dataset from the URL
+url <- "https://raw.githubusercontent.com/hn11-44/FDA-Seoul-Biking/main/SeoulBikeData.csv"
+bike <- read_csv(url, locale = locale(encoding = "latin1"))
+# Rename the name of the variables into something that is easily understandable
+names(bike) <- c('date', 'count', 'hour', 'temp', 'hum', 'wind', 'visibility', 'dew_temp', 'solar', 'rain', 'snow', 'season', 'holiday', 'functional')
+```
+
+Now that we have loaded the data set let us inspect our dataset and see what what are important details we can extract about our dataset. But just as a first preliminary check we would like to see if the data has any missing values or any duplicates. 
+
+```{r}
+# Inspect the first five rows of our bike dataset
+head(bike)
+```
+
+
+
+```{r, warning = FALSE, message = FALSE}
+# Checking the structure of the data 
+str(bike)
+```
+
+Now that we have seen the structure of the data and there are several key takeaways. We can see that our data set consists of the number of the bikes that are rented for a specific date and a specific hour of the day. In addition, to the number of the bikes that are rented we also have the state of the weather pattern or status for that specific day. But we can see that the date variables is not stored in its correct format, so we will be required to convert it to a date format. We shall keep it as is for now and take note of it to proceed and assess if we have any missing values within our data set. 
+
+
+```{r}
+# Checking if there we have any missing values in our dataset
+any_missing = any(is.na(bike))
+
+
+# Checking if we have any duplicates in our dataset
+duplicates = duplicated(bike)
+num_duplicates = sum(duplicates)
+
+
+
+# Print the missing values and the number of duplicate rows
+num_duplicates = sum(duplicates)
+print(paste("Number of duplicate rows: ", num_duplicates))
+print(paste("Are there any missing values? ", any_missing))
+```
+
+
+We can see that from here that our data does not have any missing variables and that we do not have any duplicates too. So the only thing we need to do is we need to conver the "date" variable into a date format. 
+
+```{r, warning = FALSE, message = FALSE}
+# Convert the variables season, holiday and functional into factors 
+bike$season = as.factor(bike$season)
+bike$holiday = as.factor(bike$holiday)
+bike$functional = as.factor(bike$functional)
+
+
+# Convert the variable date into the correct format
+bike$date = as.Date(bike$date, format = "%d/%m/%Y")
+
+
+#Check the structure 
+
+str(bike)
+```
+
+Now that we have converted the variable "date" let us proceed with conducting further inspection of our dataset so that we can understand the format enabling us to pre-process with more ease. Also we can see that we have converted the variables "season", "holiday" and "function" into factor. 
+
+The way our dataset is structured is that for the same date we have 24 hours of data that is recorded representing the observed bike rented and the weather condition for that day on that hour. Then recordings such as the temperature, wind visibility, dew point temperature and solar are also included for each hour. So this means that we will be viewing our functional data for the same over the different hours. But for how many days, is the data collected, we are also required to check that. 
+
+```{r}
+# View the summary of the data so as to get how the values are distributed 
+summary(bike)
+```
+Just by taking the first glimpse at the summary we can see that the values such as snow and rain are predominantly zero with the both of the means for the variables being very close to zero. But we also want to inspect how many days we have in the data set and also when our first observation has been collected and when our last observation was registered. This will give us a great sense on how to deal with our functional approach and how to structure our questions and our analysis. 
+
+
+```{r}
+# Number of unique days within our dataset 
+
+# Print the results together using cat
+cat("Number of unique days within the dataset:", length(unique(bike$date)), "\n",
+    "The first day of data collected:", min(bike$date), "\n",
+    "The last day of data collected:", max(bike$date), "\n")
+
+```
+
+Within our dataset we have the number of rented bikes that is collected hourly for the entire year. Data is collected from the last month of the year 2017 to the last day of November in 2018. So let use some visualization in order to better understand what our discrete measurement look like. 
+
+
+
+## Discrete Observation 
+
+Before we begin our functional analysis let us visualize our data in the discrete format so as to get an understanding of what the counts of the bike rented and weather condition look like on a hourly basis for the year.
+
+```{r, warning = FALSE, message = FALSE}
+# Create a color palette with 365 different colors
+color_palette <- colorRampPalette(rainbow(365))
+
+# Generate the colors
+colors <- color_palette(365)
+
+# Convert the date to day of the year
+day_of_year <- as.integer(format(bike$date, "%j"))
+
+# List of numerical variables
+numerical_vars <- c("count", "temp", "hum", "wind", "visibility", "dew_temp", "solar", "rain", "snow")
+
+# Create a list to store the plots
+plots <- list()
+
+# Loop through each numerical variable and create a plot
+for (var in numerical_vars) {
+  p <- ggplot(bike, aes_string(x = "hour", y = var, color = "colors[day_of_year]")) +
+    geom_line(alpha = 0.25) +
+    scale_color_identity() +
+    labs(x = "Hour", y = var, color = "Date",
+         title = paste("Hourly", var, "for 365 Days")) +
+    theme_minimal() +
+    theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+  
+  # Add the plot to the list
+  plots[[var]] <- p
+}
+
+# Arrange the plots in a grid
+grid.arrange(grobs = plots, ncol = 2)
+```
+
+
+Now that we have observed the different values for the different hours of the year for the numbers of rented bikes in Seoul we can observe a few things that are interesting. The first that is interesting is that there is a somewhat of a common pattern for most of the days during rush hours, which are commonly experienced in the morning around 8 o'clock and the around 5 o'clock after work. But there are some instances that deviate from this pattern, where the counts for the number of the bikes rented are lower than what is at the peak of the values. So that is worth investigating as well. Lastly, we also observe a data point that has a zero value for all of the hours of the day, that is also worth investigating. So let us start by the latter and then we will separate the data from the weekends and the weekdays in order to get a better understanding of the data that is collected. 
+
+We can also confirm that the many of the days we do not observe any snow or rain in Seoul and we have relatively fewer days of rain and snow in Seoul. And upon further research, Seoul's wet season actually lasts close to 3 months from June 17 to September 10. Snow is also an unusual phenomenon. On the other hand we can see that the solar radiation is consistent with what is experienced through the day, with the peak being somewhere around 12 o'clock to 1 o'clock. We can see some cyclical pattern for humidity and temperature. 
+
+Also another observation that is crucial is visibility variables does not follow a distinct pattern when compared to the other variables. This may be influenced with a level of pollution that is experienced within major cities does not have a clear pattern. Those are the things we can say with the little representation that we have thus far so our functional data analysis will reveal the underlying insights that are impossible to discern with our naked eyes.
+
+```{r}
+# Group the data by date and calculate the sum of count for each group
+bike_grouped <- bike %>%
+  group_by(date) %>%
+  summarise(total_count = sum(count))
+
+# Find the dates where the total count is zero
+dates_with_zero_count <- bike_grouped %>%
+  filter(total_count == 0) %>%
+  pull(date)
+
+# Print the dates with zero count
+print(dates_with_zero_count)
+print(paste("Days that have zero count:", length(dates_with_zero_count)))
+
+```
+
+We can see that we have a total of 12 days where the number of the bike's rented for those days are just zero. Let us see the entire rows of those days and see if we can get some interesting insight. 
+
+
+```{r}
+# Filter the data to get the rows corresponding to the dates with zero count
+rows_with_zero_count <- bike %>%
+  filter(date %in% dates_with_zero_count)
+
+# Print the rows with zero count
+#print(rows_with_zero_count)
+```
+
+What we can see is that for the days that we have zero count for the number of bikes rented we can see that the "functional" variable is the same for all of the days with a "No" value. But we also want to check for the occurences of the variable "functional" taking on the value of "No", just to cross check if it is only for those dates or if we have more than those dates. 
+
+
+```{r}
+# Count the number of times 'function' is 'No'
+no_count <- sum(bike$functional == "No")
+
+# Print the count
+print(paste("The 'function' variable has a value of 'No'", no_count, "times."))
+```
+
+So we know that the bike rental was not being functional for the 12 days and 7 hours of time from the end of 2017 to 2018. We have decided to remove the days where the bike rental service was not functional in Seoul. 
+
+```{r}
+# Remove the days with zero count from the original dataset
+bike <- bike %>%
+  filter(!date %in% dates_with_zero_count)
+```
+
+
+```{r, warning = FALSE, message = FALSE}
+str(bike)
+```
+We can see that the number of obsevation has reduced from 8760 to 8472, enabling us to exclude the dates where the bike rental services were not functional Now let us proceed by separating the weekdays and the weekend and observe if we have any stark differences between them.
+
+
+As we suspected we can see that the weekend data (in dotted lines) is positioned lower, meaning it has lower counts of rented bike than during the weekends. Let us separate both and see the difference of the discrete plot so that we can get a better idea when we are smoothing it using our functional data. 
+
+```{r}
+# Create a vector 'is_weekend' indicating whether a date is a weekend or not
+is_weekend <- weekdays(bike$date) %in% c("Saturday", "Sunday")
+
+# Create a plot for weekdays
+weekdays_plot <- ggplot(subset(bike, !is_weekend), aes(x = hour, y = count, group = date)) +
+  geom_line(alpha = 0.5) +
+  labs(x = "Hour", y = "Count of Bikes Rented",
+       title = "Hourly Bike Rental Count for Weekdays") +
+  theme_minimal() +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# Create a plot for weekends
+weekend_plot <- ggplot(subset(bike, is_weekend), aes(x = hour, y = count, group = date)) +
+  geom_line(alpha = 0.5) +
+  labs(x = "Hour", y = "Count of Bikes Rented",
+       title = "Hourly Bike Rental Count for Weekends") +
+  theme_minimal() +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# Display the plots side by side
+grid.arrange(weekdays_plot, weekend_plot, ncol = 1)
+```
+
+As we have mentioned above that we can see a more pronounced peak during rush hours in the morning around 8 o'clock with rented bikes reaching around 2,500 and around 5 o'clock in the afternoon with more than 3,000 bikes for the highest occurence. Where as in the weekend we can see that in around midnight the number of rented bike is higher than in the weekdays. Furthermore, we can also see that the number of rented bikes steadily increasing until 5 o'clock the afternoon. However, the number of rented bikes during the weekend do not reach the same count as during the weekdays. Then let usee if there are anything interesting that we might see based on the different season as a preliminary assessment. 
+
+
+```{r}
+# Create a plot for each season
+ggplot(bike, aes(x = hour, y = count, group = date)) +
+  geom_line(alpha = 0.25) +
+  facet_wrap(~season) +
+  labs(x = "Hour", y = "Count of Bikes Rented", 
+       title = "Hourly Bike Rental Count for Different Seasons") +
+  theme_minimal() + 
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+
+
+Assessing the different bike rented during the different seasons in Seoul, we can see that during the "Winter" season the numbers are drastically low. On the other hand during the "Summer" season we can see that the number of bike's rented reaches the highest level. This is of course due to the favorable weather conditions that are experiences during the summer as oppose to the winter. Now we can also use this information as a critical insight when setting up our data in functional form. 
+
+Previously we observed when assessing the summary and the visualization that most of values for the rain and snow values are zero. So for that reason we have added a very small value and have used the log transformation in order to not incur and error later on when conducting the preprocessing for the fuctional curves and analysis. 
+
+
+
+```{r}
+# Apply log transformation to rain and snow
+bike$rain_transformed <- log(bike$rain + 0.01)
+bike$snow_transformed <- log(bike$snow + 0.01)
+```
+So before we begin our analysis since we changed the date variables into integer when plotting the discrete observation, we will be chaning it back to its original format so as to not be confused when using here onwards. 
+
+```{r}
+# Convert the variable date into the correct format
+bike$date = as.Date(bike$date, format = "%d/%m/%Y")
+```
+
+
+## Basis Expansion
+
+### Hourly Data for the Entire Year 
+
+Now that we have explored some aspects of the data we will be treating each day as a functional data by transforming the discretely registered data for the 24 hours of the entire day. And in this section we will be trying to review and answer the following questions: 
+
+* Predicting the bike rental counts in the city of Seoul based on the weather condition. 
+
+
+* Investigate the impact of the different pre-processing techniques, such as curves with smoothing roughness penalty and curves aligned with time warping and their performance in predicting bike count accurately.
+
+
+* The impact of seasonal variation in the bike rental patterns? 
+
+
+The questions can be important to optimize bike availability and so that it can enable stakeholder to make adjustment the number of bikes available during different hours of the day or during different weather conditions. This could impact the bike availability and improve customer satisfaction.So we will be treating the count variable of bike rental count as our target variables and the remaining as our covariates or dependents. 
+
+Since we have many variables we will begin by using a function format that would enable us to create a functional form so that we can pre-process our variables accordingly. We will start by creating a basis then we will be converting our discrete values into the functional forms given the values of the variables. It is evident that variables. In this is instance it is important to note that since we cannot convert the categorical variables we may consider including them later on in a format that may be more suitable. For now we will focus on the numerical variables that have been collected on an hourly basis for the entire year. 
+
+
+
+```{r}
+#Define the range over which the basis functions will be defined this will be our
+# hours that range from 0 to 23 to create our functional curves 
+rangeval <- c(0, 23)
+
+#We will also want to define the hours in a way memorable way 
+hours <- 0:23
+
+# Function to create basis based on type and number of basis functions
+create_basis <- function(type, rangeval, nbasis) {
+  if (type == "fourier") {
+    return(create.fourier.basis(rangeval = rangeval, nbasis = nbasis))
+  } else if (type == "bspline") {
+    return(create.bspline.basis(rangeval = rangeval, nbasis = nbasis))
+  } else {
+    stop("Invalid basis type. Choose either 'fourier' or 'bspline'.")
+  }
+}
+
+# Convert discrete data to functional data and return both fd object and nbasis
+convert_to_fd <- function(data, basis_type, nbasis, var_name) {
+  basis <- create_basis(basis_type, rangeval = c(0, 23), nbasis = nbasis) # Uses the create_basis function above to create the basis based on the type
+  data_matrix <- matrix(data, nrow = 24, byrow = FALSE) # A data matrix of our data along with the variable which will be used to with the smooth.basis function from fda
+  fd_obj <- smooth.basis(hours, data_matrix, basis) # Our functional object 
+  fd_name <- paste0("fd_obj_", var_name) # Rename the fd_obj with the variable name 
+  assign(fd_name, fd_obj, envir = .GlobalEnv) # We will be using the variable for further analysis outside this function
+  return(list(fd = fd_obj, nbasis = nbasis, basis_type = basis_type)) # Return the functional object
+}
+
+```
+
+So our function will take on the type of basis we would like to use, in this project we will only be relying on either the B-spline or the Fourier transformation, and then we have already specified the range of evaluation which is from 0 to 23, and the range of hours. Then we will be converting the data by first converting the value from the dataset into a matrix form and then rename the functional object by appending the name of the variable.
+
+Given the behaviour of our variables we will be using a mix of the fourier for variables such as the bike rental count, the temperature and solar because of their periodic nature of the variables. For variables that have more of can vary with some irregularity we have resorted to B-spline. In this case it is important since we will be using the count variables as our target the value we are trying to predict. So after converting we will be plotting it and seeing the results of our transformation for the 353 functions. 
+
+
+
+```{r}
+# Apply the conversion to each variable with customized basis functions
+count_fd <- convert_to_fd(bike$count, "fourier", 15, "count")
+temp_fd <- convert_to_fd(bike$temp, "fourier", 15, "temp")
+hum_fd <- convert_to_fd(bike$hum, "bspline", 10, "hum")
+wind_fd <- convert_to_fd(bike$wind, "bspline", 10, "wind")
+visibility_fd <- convert_to_fd(bike$visibility, "bspline", 10, "visibility")
+dew_temp_fd <- convert_to_fd(bike$dew_temp, "bspline", 10, "dew_temp")
+solar_fd <- convert_to_fd(bike$solar, "fourier", 15, "solar")
+rain_fd <- convert_to_fd(bike$rain_transformed, "bspline", 10, "rain")
+snow_fd <- convert_to_fd(bike$snow_transformed, "bspline", 10, "snow")
+```
+
+
+
+
+
+
+```{r}
+# Define a function to plot functional data with a custom title
+plot_fd <- function(fd_list, variable_name) {
+  plot(fd_list$fd, xlab = "Hour", ylab = variable_name, main = paste(variable_name, " (", fd_list$basis_type, ", K = ", fd_list$nbasis, ")", sep = ""))
+}
+
+# List of functional data objects and their corresponding variable names
+fd_objects <- list(count_fd = "Bike Rental Count", temp_fd = "Temperature", hum_fd = "Humidity",
+                   wind_fd = "Windspeed", visibility_fd = "Visibility", dew_temp_fd = "Dew Temp",
+                   solar_fd = "Solar Radiation", rain_fd = "Rainfall", snow_fd = "Snowfall")
+
+# Set up a 3x3 grid for plotting
+par(mfrow = c(3, 3))
+
+# Loop through each functional data object and plot it
+for (fd_name in names(fd_objects)) {
+  plot_fd(get(fd_name), fd_objects[[fd_name]])
+}
+
+# Reset the plotting area to default
+par(mfrow = c(1, 1))
+```
+
+
+Now that we have created our expansion using a fourier and a b-spline would want to assess a sample of the days in order to see how our function fits the observed data. This is the stage wehere we would be visually assessing if we have selected a basis that would capture the pattern of our discrete observation. So again since we will be reusing this later after we implement a roughness penalty we have resorted to using a faction.We have put some checks to see if the variables exists and then check the type of object that has been inputted, in this case we will require the functional data from our functional object and for flexibility we will be checking whether we are using the functional data or the functional object. Since we have stored our variables in a functional format in our case it will be extracting the functional data values and then plotting the fitted values for the specific date and then plotting it. 
+
+After we had converted the our variables to functional variables we have used a boxplot to see if we have any outliers within the functional curves.
+
+```{r}
+# Function to create boxplots for each functional data object
+plot_boxplots <- function(fd_list, method = "Both") {
+  # Set up the plotting area to have a 3x3 grid
+  par(mfrow = c(3, 3))
+  
+  # Loop through each functional data object and create a boxplot
+  for (variable_name in names(fd_list)) {
+    fd_obj <- fd_list[[variable_name]]
+    boxplot(fd_obj, method = method, main = variable_name)
+  }
+  
+  # Reset the plotting area to default
+  par(mfrow = c(1, 1))
+}
+```
+
+
+```{r, warning = FALSE, message = FALSE}
+# List of functional data objects
+fd_list <- list(
+  count = count_fd$fd,
+  temp = temp_fd$fd,
+  hum = hum_fd$fd,
+  wind = wind_fd$fd,
+  visibility = visibility_fd$fd,
+  dew_temp = dew_temp_fd$fd,
+  solar = solar_fd$fd,
+  rain = rain_fd$fd,
+  snow = snow_fd$fd
+)
+
+# Call the function to plot the boxplots
+plot_boxplots(fd_list)
+```
+We can see that most of our variables rain and snow have a lot of outlier That is because we can see that they are sporadic events within the year and as we have identified earlier they usually take on the value of zero. 
+
+
+```{r}
+plot_fd_sampled <- function(data, fd_list, variable, days, hours = 0:23) {
+  # Ensure the variable exists in the data
+  if (!variable %in% names(data)) {
+    stop("Variable not found in the data.")
+  }
+  
+  # Check if fd_list is already an fd object or a list containing the fd object
+  if (inherits(fd_list, "fd")) {
+    fd_obj <- fd_list
+  } else if (is.list(fd_list) && "fd" %in% names(fd_list)) {
+    fd_obj <- fd_list$fd
+  } else {
+    stop("fd_list must be a functional data object of class 'fd' or a list containing the 'fd' element.")
+  }
+  
+  # Map the sampled dates to their indices in fd_obj
+  day_indices <- match(days, unique(data$date))
+  
+  # Set up the plot layout
+  par(mfrow = c(2, 3))
+  
+  # Loop through the selected days and plot
+  for (i in 1:length(days)) {
+    day_index <- day_indices[i]
+    
+    plot(data$hour[data$date == days[i]], data[[variable]][data$date == days[i]],
+         main = paste("Day", day_index, variable), xlab = "Hour", ylab = variable)
+    
+    # Evaluate the functional data object for the specific day
+    fitted_values <- eval.fd(hours, fd_obj[day_index])
+    
+    # Plot the fitted values
+    lines(data$hour[data$date == days[i]], fitted_values)
+  }
+}
+```
+
+
+
+
+```{r}
+# Set the seed for reproducibility and get the a sample of 5 days from our bike dataset without replacement
+set.seed(100)
+days <- sample(unique(bike$date), 6, replace = FALSE)
+
+# List of functional data objects and their corresponding variable names
+fd_objects <- list(count_fd = "count", temp_fd = "temp", hum_fd = "hum",
+                   wind_fd = "wind", visibility_fd = "visibility", dew_temp_fd = "dew_temp",
+                   solar_fd = "solar", rain_fd = "rain_transformed", snow_fd = "snow_transformed")
+
+# Loop through each functional data object and plot it
+for (fd_name in names(fd_objects)) {
+  plot_fd_sampled(bike, get(fd_name)$fd, fd_objects[[fd_name]], days)
+}
+```
+
+
+
+We can see some of the functional fitted values we have a case where all of it may overfit. To correct this we will be applying a smoothing parameter that will enable us to conduct and add a roughness penalty for the fitted values. Again we will be using a function to do this and we will also store the optimal lambda and our optimized functional object, but we will do it with a saturated basis of $K = 23$. 
+
+
+## Smoothing with a Roughness Penalty 
+
+To smooth our functional curve with a roughness penalty we have taken a different approach. As mentioned earlier we will be applying a saturated basis of $K = 23$ and assessing what the optimal lambdas are and how they fit in our sampled days. But let us discuss the code that will be allowing us to apply the generalized cross validation (GCV) technique to find the optimal lambda to apply the roughness penalty. 
+
+
+We have created a function calculates the GCV to determine the optimal lambda for the variables. Specifying over the range of the log values of our lambda we store the results of the degrees of freedom and the values that are calculated. Then this function will be called in the second function which is used to find the optimal lambda and create the plots. We have used a harmonic accelerator for the Fourier basis and a second derivative for the B-splines. We will then have all of the smoothed plots for all of the variables. The concept of smoothing is to remove all of the wiggles that are observed when fitting which could be the thought of as the noise and helps catch the underlying pattern
+
+```{r}
+# Define loglam
+loglam <- seq(-6, 6, length.out = 100)  # Adjust the range and length as needed
+
+# Function to calculate GCV for basis with appropriate penalty
+calculate_gcv <- function(data, basis, Lfdobj, loglam) {
+  dfsave <- rep(NA, length(loglam))
+  gcvsave <- rep(NA, length(loglam))
+  for (ilam in 1:length(loglam)) {
+    lambda <- 10^loglam[ilam]
+    fdParobj <- fdPar(basis, Lfdobj, lambda)
+    smoothlist <- smooth.basis(hours, data, fdParobj)
+    dfsave[ilam] <- smoothlist$df
+    gcvsave[ilam] <- sum(smoothlist$gcv)
+  }
+  return(list(dfsave = dfsave, gcvsave = gcvsave))
+}
+
+# Function to find the optimal lambda and create plots
+find_optimal_lambda_and_create_plots <- function(data, basis_type, nbasis, variable_name, loglam) {
+  hours <- 0:23 
+  rangeval <- c(0, 23)
+  basis <- create_basis(basis_type, rangeval = rangeval, nbasis = nbasis)
+  data_matrix <- matrix(data, nrow = 24, byrow = FALSE)
+  
+  if (basis_type == "fourier") {
+    Lcoef <- c(0, (2 * pi / diff(rangeval))^2, 0) # Harmonic accelerator operator used for Fourier 
+    Lfdobj <- vec2Lfd(Lcoef, c(0, 23))
+  } else if (basis_type == "bspline") {
+    Lfdobj <- int2Lfd(2)
+  }
+  
+  gcv_results <- calculate_gcv(data_matrix, basis, Lfdobj, loglam)
+  gcv_results_name <- paste0('gcv_results_', variable_name)
+  assign(gcv_results_name, gcv_results, envir = .GlobalEnv)
+  
+  # Find the index of the minimum GCV value
+  optimal_index <- which.min(gcv_results$gcvsave)
+  
+  # Get the optimal log10(lambda) and lambda values
+  optimal_loglam <- loglam[optimal_index]
+  optimal_lambda <- 10^optimal_loglam
+  
+  cat(sprintf('Optimal log10(lambda) for %s = %.2f\n', variable_name, optimal_loglam))
+  cat(sprintf('Optimal lambda for %s = %.2f\n', variable_name, optimal_lambda))
+  
+  # Save the optimal lambda value with a specific name
+  optimal_lambda_name <- paste0("optimal_lambda_", variable_name)
+  assign(optimal_lambda_name, optimal_lambda, envir = .GlobalEnv)
+  
+  # Smooth the data using the optimal lambda value
+  fdParobj_opt <- fdPar(basis, Lfdobj, optimal_lambda)
+  smoothlist_opt <- smooth.basis(hours, data_matrix, fdParobj_opt)
+  fd_opt <- smoothlist_opt
+
+  
+  # Set up a 3x3 plotting layout
+  par(mfrow = c(2, 1))
+  
+  # Create GCV plot
+  gcv_plot <- plot(loglam, gcv_results$gcvsave, type = 'b', xlab = 'log10(lambda)', ylab = 'GCV', main = paste('GCV vs log10(lambda) for', variable_name))
+  
+  # Create smoothed data plot
+  smoothed_plot <- plot(fd_opt, xlab = "Hour", ylab = variable_name, main = paste('Smoothed', variable_name, 'with Optimal Lambda =', round(optimal_lambda, 2)))
+  
+  # Assign plots to global variables
+  smoothed_plot_name <-  paste0(variable_name, "_fd_opt_plot")
+  assign(smoothed_plot_name, smoothed_plot, envir = .GlobalEnv)
+  gcv_plot_name <- paste0(variable_name, "_gcv_plot")
+  assign(gcv_plot_name, gcv_plot, envir = .GlobalEnv)
+  
+   return(fd_opt)
+}
+
+```
+
+
+Now we will be calling the functiona and setting the approriate expansion for the variables and we include the basis. 
+
+```{r, results = "hide"}
+# Apply the function to each variable
+count_fd_opt <-find_optimal_lambda_and_create_plots(bike$count, "fourier", 23, "count", loglam)
+temp_fd_opt <- find_optimal_lambda_and_create_plots(bike$temp, "fourier", 23, "temp", loglam)
+hum_fd_opt <- find_optimal_lambda_and_create_plots(bike$hum, "bspline", 23, "hum", loglam)
+wind_fd_opt <- find_optimal_lambda_and_create_plots(bike$wind, "bspline", 23, "wind", loglam)
+visibility_fd_opt <- find_optimal_lambda_and_create_plots(bike$visibility, "bspline", 23, "visibility", loglam)
+dew_temp_fd_opt <- find_optimal_lambda_and_create_plots(bike$dew_temp, "bspline", 23, "dew_temp", loglam)
+solar_fd_opt <-find_optimal_lambda_and_create_plots(bike$solar, "fourier", 23, "solar", loglam)
+rain_fd_opt <- find_optimal_lambda_and_create_plots(bike$rain_transformed, "bspline",23, "rain", loglam)
+snow_fd_opt <- find_optimal_lambda_and_create_plots(bike$snow_transformed, "bspline",23, "snow", loglam)
+```
+
+
+```{r}
+# Set up a 3x3 plotting layout
+par(mfrow = c(3, 3))
+
+# List of variable names
+variable_names <- c("count", "temp", "hum", "wind", "visibility", "dew_temp", "solar", "rain", "snow")
+
+
+# List of smoothed plots
+smoothed_plots <- list(
+  count_fd_opt,
+  temp_fd_opt,
+  hum_fd_opt,
+  wind_fd_opt,
+  visibility_fd_opt,
+  dew_temp_fd_opt,
+  solar_fd_opt,
+  rain_fd_opt,
+  snow_fd_opt
+)
+
+
+# List of optimal lambda values
+optimal_lambdas <- c(
+  optimal_lambda_count,
+  optimal_lambda_temp,
+  optimal_lambda_hum,
+  optimal_lambda_wind,
+  optimal_lambda_visibility,
+  optimal_lambda_dew_temp,
+  optimal_lambda_solar,
+  optimal_lambda_rain,
+  optimal_lambda_snow
+)
+
+# Iterate through the smoothed plots and plot them with optimal lambda in the title
+for (i in 1:length(smoothed_plots)) {
+  plot(smoothed_plots[[i]]$fd, xlab = "Hour", ylab = variable_names[i], main = paste('Smoothed', variable_names[i], 'with Optimal Lambda =', round(optimal_lambdas[i], 2)))
+}
+
+# Reset plotting layout to 1x1
+par(mfrow = c(1, 1))
+```
+
+
+We can see from some of the plots that the wiggles have smoothened out when compared to our plot that is fitted without the penalized roghness. Now in the next stage let us see how the sampled days we have seen in the previous section differ in terms of the observed value and the fitted curve with the roughness penalty.   
+
+
+```{r}
+# List of optimized functional data objects and their corresponding variable names
+fd_opt_objects <- list(count_fd_opt = "count", temp_fd_opt = "temp", hum_fd_opt = "hum",
+                       wind_fd_opt = "wind", visibility_fd_opt = "visibility", dew_temp_fd_opt = "dew_temp",
+                       solar_fd_opt = "solar", rain_fd_opt = "rain_transformed", snow_fd_opt = "snow_transformed")
+
+# Loop through each optimized functional data object and plot it
+for (fd_name in names(fd_opt_objects)) {
+  variable_name <- fd_opt_objects[[fd_name]]
+  fd_opt <- get(fd_name)$fd
+  plot_fd_sampled(bike, fd_opt, variable_name, days)
+}
+```
+
+As a result of the smoothing roughness penalty we are able to identify the optimal lambda, however one thing that is noticeable is that the variables solar may overfit the observed data with a $\lambda = 0$. So we might have to revise the number of basis we will be selecting in the subsequent regression analysis. 
+
+### Evaluating and Plotting the Derivatives 
+
+```{r}
+# Function to compute and plot first and second derivatives
+compute_and_plot_derivatives <- function(fd_obj, variable_name) {
+  # Compute the first and second-order derivatives of the smoothed functional data
+  fd_deriv1 <- deriv.fd(fd_obj, 1)
+  fd_deriv2 <- deriv.fd(fd_obj, 2)
+  
+  # Evaluate the derivatives at fine time points
+  hours_fine <- seq(0, 23, length.out = 200)
+  fd_deriv1_eval <- eval.fd(hours_fine, fd_deriv1)
+  fd_deriv2_eval <- eval.fd(hours_fine, fd_deriv2)
+  
+  # Compute the mean derivatives across all days
+  fd_deriv1_mean <- rowMeans(fd_deriv1_eval)
+  fd_deriv2_mean <- rowMeans(fd_deriv2_eval)
+  
+  # Combine the individual derivatives with the mean
+  first_deriv_data <- cbind(fd_deriv1_eval, fd_deriv1_mean)
+  second_deriv_data <- cbind(fd_deriv2_eval, fd_deriv2_mean)
+  
+  # Set up the plotting area to have two rows and one column
+  par(mfrow = c(2, 1))
+  
+  # Plot the first-order derivatives
+  matplot(hours_fine, first_deriv_data, type = 'l', lty = 1, pch = 'o', xlab = 'Hour', ylab = 'First Derivative', col = c(rep(3, ncol(fd_deriv1_eval)), 1), ylim = range(first_deriv_data), main = paste('First Derivative of', variable_name))
+  legend("topright", legend = c("Individual Days", "Mean"), col = c(3, 1), lty = 1, pch = 'o')
+  
+  # Plot the second-order derivatives
+  matplot(hours_fine, second_deriv_data, type = 'l', lty = 1, pch = 'o', xlab = 'Hour', ylab = 'Second Derivative', col = c(rep(3, ncol(fd_deriv2_eval)), 1), ylim = range(second_deriv_data), main = paste('Second Derivative of', variable_name))
+  legend("topright", legend = c("Individual Days", "Mean"), col = c(3, 1), lty = 1, pch = 'o')
+  
+  # Reset the plotting area to default
+  par(mfrow = c(1, 1))
+  
+  # Save the derivatives with variable-specific names
+  assign(paste0("fd_deriv1_eval_", variable_name), fd_deriv1_eval, envir = .GlobalEnv)
+  assign(paste0("fd_deriv2_eval_", variable_name), fd_deriv2_eval, envir = .GlobalEnv)
+  assign(paste0("fd_deriv1_mean_", variable_name), fd_deriv1_mean, envir = .GlobalEnv)
+  assign(paste0("fd_deriv2_mean_", variable_name), fd_deriv2_mean, envir = .GlobalEnv)
+  
+  return(list(fd_deriv1 = fd_deriv1_eval, fd_deriv2 = fd_deriv2_eval))
+}
+
+```
+
+
+```{r}
+# Compute and plot derivatives for each variable
+count_derivatives <- compute_and_plot_derivatives(count_fd_opt$fd, "count")
+temp_derivatives <- compute_and_plot_derivatives(temp_fd_opt$fd, "temp")
+hum_derivatives <- compute_and_plot_derivatives(hum_fd_opt$fd, "hum")
+wind_derivatives <- compute_and_plot_derivatives(wind_fd_opt$fd, "wind")
+visibility_derivatives <- compute_and_plot_derivatives(visibility_fd_opt$fd, "visibility")
+dew_temp_derivatives <- compute_and_plot_derivatives(dew_temp_fd_opt$fd, "dew_temp")
+solar_derivatives <- compute_and_plot_derivatives(solar_fd_opt$fd, "solar")
+rain_derivatives <- compute_and_plot_derivatives(rain_fd_opt$fd, "rain")
+snow_derivatives <- compute_and_plot_derivatives(snow_fd_opt$fd, "snow")
+```
+
+
+
+
+### Data Registration, Phase Aligmnet (Warping Technique)
+
+In this section we will be creating a alignment of the phase variation using the warping methods. This will enable us to align all of the times at which the peak is observed. We will be conducting this for the derivatives as well as a way to visualise how the warping has been conducted. Then we will be plotting the original the first and second derivatives as well as the level of distortion that has occured when conducting the alignement. 
+
+```{r}
+# Function to perform alignment and plot results
+perform_alignment_and_plot <- function(fd_obj, fd_deriv1, fd_deriv2, variable_name, hours_fine) {
+  hours <- 0:23
+  hours_fine <- seq(0, 23, length.out = 200)
+  # Perform automatic registration on the original dataset
+  aligned_fd <- time_warping(f = eval.fd(hours, fd_obj), time = hours)
+  
+  # Perform automatic registration on the first derivative
+  aligned_fd_deriv1 <- time_warping(f = get(paste0("fd_deriv1_eval_", variable_name)), time = hours_fine)
+  
+  # Perform automatic registration on the second derivative
+  aligned_fd_deriv2 <- time_warping(f = get(paste0("fd_deriv2_eval_", variable_name)), time = hours_fine)
+  
+  # Function to plot original and aligned curves
+  plot_alignment <- function(aligned_data, time, variable_name, derivative_order) {
+    # Plot original unaligned curves
+    fdsdta <- fds(x = time, y = aligned_data$f0, xname = "Hours", yname = paste(variable_name, "Count"))
+    plot.fds(fdsdta, plot.type = "functions", xlab = 'Hours', ylab = paste(variable_name), main = paste("Unaligned", derivative_order, "Derivative", variable_name))
+    
+    # Plot aligned curves
+    fdsdta <- fds(x = time, y = aligned_data$fn, xname = "Hours", yname = paste(variable_name, "Count"))
+    plot.fds(fdsdta, plot.type = "functions", xlab = 'Aligned Hours', ylab = paste(variable_name, "Count"), main = paste("Aligned", derivative_order, "Derivative", variable_name))
+    
+    # Plot warping functions
+    fdsdta <- fds(x = time, y = aligned_data$warping_functions, xname = "Hours", yname = "Relative Time")
+    plot.fds(fdsdta, plot.type = "functions", xlab = 'Aligned Hours', ylab = 'Relative Time', main = paste("Time Warping of", derivative_order, "Derivative", variable_name))
+  }
+  
+  # Set up the plotting area to have a 3 by 3 grid
+  par(mfrow = c(3, 3))
+  
+  # Plot original and aligned curves for the original data
+  plot_alignment(aligned_fd, hours, variable_name, "")
+  
+  # Plot original and aligned curves for the first derivative
+  plot_alignment(aligned_fd_deriv1, hours_fine, variable_name, "First")
+  
+  # Plot original and aligned curves for the second derivative
+  plot_alignment(aligned_fd_deriv2, hours_fine, variable_name, "Second")
+  
+  # Return aligned functional data objects with variable-specific names
+  assign(paste0("aligned_fd_", variable_name), aligned_fd, envir = .GlobalEnv)
+  assign(paste0("aligned_fd_deriv1_", variable_name), aligned_fd_deriv1, envir = .GlobalEnv)
+  assign(paste0("aligned_fd_deriv2_", variable_name), aligned_fd_deriv2, envir = .GlobalEnv)
+  
+  return(list(aligned_fd = aligned_fd, aligned_fd_deriv1 = aligned_fd_deriv1, aligned_fd_deriv2 = aligned_fd_deriv2))
+}
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+# Apply the function to each variable
+aligned_fd_count <- perform_alignment_and_plot(count_fd_opt$fd, count_derivatives$fd_deriv1, count_derivatives$fd_deriv2, "count")
+aligned_fd_temp <- perform_alignment_and_plot(temp_fd_opt$fd, temp_derivatives$fd_deriv1, temp_derivatives$fd_deriv2, "temp")
+aligned_fd_hum <- perform_alignment_and_plot(hum_fd_opt$fd, hum_derivatives$fd_deriv1, hum_derivatives$fd_deriv2, "hum")
+aligned_fd_wind <- perform_alignment_and_plot(wind_fd_opt$fd, wind_derivatives$fd_deriv1, wind_derivatives$fd_deriv2, "wind")
+aligned_fd_visibility <- perform_alignment_and_plot(visibility_fd_opt$fd, visibility_derivatives$fd_deriv1, visibility_derivatives$fd_deriv2, "visibility")
+aligned_fd_dew_temp <- perform_alignment_and_plot(dew_temp_fd_opt$fd, dew_temp_derivatives$fd_deriv1, dew_temp_derivatives$fd_deriv2, "dew_temp")
+aligned_fd_solar <- perform_alignment_and_plot(solar_fd_opt$fd, solar_derivatives$fd_deriv1, solar_derivatives$fd_deriv2, "solar")
+aligned_fd_rain <- perform_alignment_and_plot(rain_fd_opt$fd, rain_derivatives$fd_deriv1, rain_derivatives$fd_deriv2, "rain")
+aligned_fd_snow <- perform_alignment_and_plot(snow_fd_opt$fd, snow_derivatives$fd_deriv1, snow_derivatives$fd_deriv2, "snow")
+
+```
+
+
+### FPCA and VARIMAX 
+
+In this section we will be conducting FPCA and inspect the first three princial scores, in our case referred to as the harmonics. This will be useful especially when we are conducting the functional regression so that we cna keep only a few basis rather than including all of it. We will also be inspecting the VARIMAX which is more for interpretation. We only be including it as a comparison and will not be relying on it in the regression for the sake of simplicity. 
+
+
+```{r}
+perform_fpca <- function(fd_obj, basis_type, nbasis, nharm = 3, lambda_var, variable_name) {
+  # Ensure the aligned_fd is a list of class 'fdawarp'
+  #if (!inherits(aligned_fd, "fdawarp")) {
+    #stop("aligned_fd must be a list of class 'fdawarp'.")
+  #}
+  
+  # Extract the aligned functions (fn) and time grid
+  #aligned_functions <- aligned_fd$fn
+  #time_grid <- aligned_fd$time
+  time_grid <- seq(0, 23)
+  
+  # Determine the basis type and create the corresponding basis object
+  if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = range(time_grid), nbasis = nbasis)
+    Lfdobj <- vec2Lfd(c(0, (2 * pi / diff(range(time_grid)))^2, 0), range(time_grid))
+    harmfdPar <- fdPar(basis, Lfdobj, lambda = lambda_var)
+  } else if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = range(time_grid), nbasis = nbasis)
+    Lfdobj <- int2Lfd(2)
+    harmfdPar <- fdPar(basis, Lfdobj, lambda = lambda_var)
+  } else {
+    stop("Unsupported basis type. Choose either 'fourier' or 'bspline'.")
+  }
+  
+  # Create the functional data object
+  #fd_obj <- smooth.basis(time_grid, aligned_functions, basis)
+  
+  # Save the functional data object in the global environment
+  #assign(paste0("aligned_fd_obj_", variable_name), fd_obj, envir = .GlobalEnv)
+  
+  # Perform FPCA
+  fpca_result <- pca.fd(fdobj = fd_obj$fd, nharm = nharm, harmfdPar = harmfdPar, centerfns = TRUE)
+  
+  # Extract the results
+  harmonics <- fpca_result$harmonics
+  eigenvalues <- fpca_result$values
+  scores <- fpca_result$scores
+  varprop <- fpca_result$varprop
+  meanfd <- fpca_result$meanfd
+  
+  # Print the proportion of variance explained by each eigenfunction
+  print(varprop)
+  
+  # Set up the plotting area to have multiple plots
+  par(mfrow = c(2, 1))  # Adjust the layout as needed
+  
+  # Plot the harmonics (eigenfunctions) with a legend
+  plot(harmonics, main = paste(variable_name, "Harmonics (Eigenfunctions)"), col = 1:nharm)
+  legend("topright", legend = paste("PC", 1:nharm), col = 1:nharm, lty = 1, cex = 0.8)
+  
+  # Add text annotations for the proportion of variance explained
+  for (i in 1:nharm) {
+    mtext(paste("PC", i, ":", round(varprop[i] * 100, 2), "%"), side = 3, line = -i, col = i)
+  }
+  
+  # Plot the mean function
+  plot(meanfd, main = paste(variable_name, "Mean Function"))
+  
+  # Reset the plotting area to default
+  par(mfrow = c(1, 1))
+  
+  return(fpca_result)
+}
+```
+
+
+```{r}
+# Perform FPCA on the aligned functional data for the 'count' variable
+fpca_count <- perform_fpca(count_fd_opt,nharm = 3, basis_type = "fourier", nbasis = 23, optimal_lambda_count, "count")
+
+# Perform FPCA on the aligned functional data for the 'temp' variable
+fpca_temp <- perform_fpca(temp_fd_opt,nharm = 3, basis_type = "fourier", nbasis = 23, optimal_lambda_temp, "temp")
+
+# Perform FPCA on the aligned functional data for the 'hum' variable
+fpca_hum <- perform_fpca(hum_fd_opt,nharm = 3, basis_type = "bspline", nbasis = 23, optimal_lambda_hum, "hum")
+
+# Perform FPCA on the aligned functional data for the 'wind' variable
+fpca_wind <- perform_fpca(wind_fd_opt, nharm = 3,basis_type = "bspline", nbasis = 23, optimal_lambda_wind,  "wind")
+
+# Perform FPCA on the aligned functional data for the 'visibility' variable
+fpca_visibility <- perform_fpca(visibility_fd_opt,nharm = 3, basis_type = "bspline", nbasis = 23, optimal_lambda_visibility, "visibility")
+
+# Perform FPCA on the aligned functional data for the 'dew_temp' variable
+fpca_dew_temp <- perform_fpca(dew_temp_fd_opt,nharm = 3, basis_type = "bspline", nbasis = 23, optimal_lambda_dew_temp, "dew_temp")
+
+# Perform FPCA on the aligned functional data for the 'solar' variable
+fpca_solar <- perform_fpca(solar_fd_opt,nharm = 3, basis_type = "fourier", nbasis = 15, optimal_lambda_solar,  "solar")
+
+# Perform FPCA on the aligned functional data for the 'rain' variable
+fpca_rain <- perform_fpca(rain_fd_opt, nharm = 3, basis_type = "bspline", nbasis = 23, optimal_lambda_rain,  "rain")
+
+# Perform FPCA on the aligned functional data for the 'snow' variable
+fpca_snow <- perform_fpca(snow_fd_opt, nharm = 3, basis_type = "bspline", nbasis = 23, optimal_lambda_rain,  "snow")
+
+```
+
+```{r}
+plot_fpca_results <- function(fpca_list) {
+  # Set up the plotting area to have one row and three columns
+  par(mfrow = c(3, 1))
+  
+  # Enable the prompt to hit <Return> before moving to the next plot
+  devAskNewPage(FALSE)
+  
+  # Loop through the FPCA results and plot the first two PCs
+  for (i in 1:length(fpca_list)) {
+    plot(fpca_list[[i]])
+  }
+  
+  # Disable the prompt to hit <Return> before moving to the next plot
+  #devAskNewPage(FALSE)
+  
+  # Reset the plotting area to default
+  par(mfrow = c(1, 1))
+}
+
+```
+
+
+```{r}
+fpca_list <- list(fpca_temp, fpca_hum, fpca_wind, fpca_visibility, fpca_dew_temp, fpca_solar, fpca_rain, fpca_snow)
+# Corresponding variable names
+variable_names <- c("Temp", "Hum", "Wind")
+
+# Call the function to plot the FPCA results
+plot_fpca_results(fpca_list)
+                  
+                  
+```
+
+
+
+
+```{r}
+# Function to apply Varimax rotation to FPCA results
+apply_varimax_rotation <- function(fpca_result, nharm, variable_name) {
+  # Apply Varimax Rotation
+  varmax_pcout <- varmx.pca.fd(fpca_result)
+  
+  # Extract Rotated Harmonics
+  rotated_harmonics <- varmax_pcout$harmonics
+  rotated_scores <- varmax_pcout$scores
+  rotated_varprop <- varmax_pcout$varprop
+  
+  # Print the proportion of rotated variance explained by each eigenfunction
+  print(rotated_varprop)
+  
+  # Set up the plotting area to have multiple plots
+  par(mfrow = c(2, 1))  # Adjust the layout as needed
+  
+  # Plot Rotated Harmonics (Eigenfunctions)
+  plot(rotated_harmonics, main = paste(variable_name, "VARIMAX Harmonics (Eigenfunctions)"), col = 1:nharm)
+  
+  # Create legend labels with variance explained
+  legend_labels <- paste("PC", 1:nharm, "(", round(rotated_varprop * 100, 2), "%)", sep = "")
+  
+  # Add legend to the plot
+  legend("topright", legend = legend_labels, col = 1:nharm, lty = 1, cex = 0.8)
+  
+  # Plot Rotated Scores
+  plot(rotated_scores, main = paste(variable_name, "VARIMAX Principal Component Scores"))
+  
+  return(varmax_pcout)
+}
+```
+
+
+```{r}
+# Apply Varimax rotation to the FPCA results for the 'count' variable
+varmax_count <- apply_varimax_rotation(fpca_count, nharm = 3, variable_name = "count")
+
+# Apply Varimax rotation to the FPCA results for the 'temp' variable
+varmax_temp <- apply_varimax_rotation(fpca_temp, nharm = 3, variable_name = "temp")
+
+# Apply Varimax rotation to the FPCA results for the 'hum' variable
+varmax_hum <- apply_varimax_rotation(fpca_hum, nharm = 3, variable_name = "hum")
+
+# Apply Varimax rotation to the FPCA results for the 'wind' variable
+varmax_wind <- apply_varimax_rotation(fpca_wind, nharm = 3, variable_name = "wind")
+
+# Apply Varimax rotation to the FPCA results for the 'visibility' variable
+varmax_visibility <- apply_varimax_rotation(fpca_visibility, nharm = 3, variable_name = "visibility")
+
+# Apply Varimax rotation to the FPCA results for the 'dew_temp' variable
+varmax_dew_temp <- apply_varimax_rotation(fpca_dew_temp, nharm = 3, variable_name = "dew_temp")
+
+# Apply Varimax rotation to the FPCA results for the 'solar' variable
+varmax_solar <- apply_varimax_rotation(fpca_solar, nharm = 3, variable_name = "solar")
+
+# Apply Varimax rotation to the FPCA results for the 'rain' variable
+varmax_rain <- apply_varimax_rotation(fpca_rain, nharm = 3, variable_name = "rain")
+
+# Apply Varimax rotation to the FPCA results for the 'snow' variable
+varmax_snow <- apply_varimax_rotation(fpca_snow, nharm = 3, variable_name = "snow")
+```
+
+
+
+### Functional Regressions
+
+For the functional regression we used the unaligned and aligned curves in order to compare the differences of the coefficients and to evaluate the overall model. For both of the curves we have also used a model with constant and without constant to assess the performance. 
+
+To evaluate the results of our model we have used the methods that were implemented by the following page:https://github.com/caojiguo/FDAcourse2019/blob/master/Rcodes/Lecture%2015-Estimating%20functional%20Linear%20Models%20.R. We also utilized the book Functional Data Analysis with R and MATLAB by Ramsay. 
+
+We have used the RMSE which are computed by taking the squared different between the observed and the fitted values. Then we also implemented a plot in order to see how the observed value are distributed along the predicted values.Then we proceeded to compute the F-ratio of our model to get the variance that is explained by all the covariates within the model. 
+
+
+### Scalar on Function 
+
+```{r}
+# Aggregate hourly bike rental counts to get mean daily bike rental count
+bike_daily <- bike %>%
+  group_by(date) %>%
+  summarize(mean_count = mean(count))
+
+# Define the scalar response variable in log form
+# Ensure the response variable is numeric
+response <- as.numeric(bike_daily$mean_count)
+
+```
+
+
+ 
+#### Aligned Regression 
+
+Let us extract the aligned values using a function, because they are in fdwarp format.  
+
+```{r}
+convert_aligned_data <- function(aligned_fd, basis_type, nbasis, lambda_var, variable_name) {
+  # Ensure the aligned_fd is a list of class 'fdawarp'
+  if (!inherits(aligned_fd, "fdawarp")) {
+    stop("aligned_fd must be a list of class 'fdawarp'.")
+  }
+  
+  # Extract the aligned functions (fn) and time grid
+  aligned_functions <- aligned_fd$fn
+  time_grid <- aligned_fd$time
+  
+  # Determine the basis type and create the corresponding basis object
+  if (basis_type == "fourier") {
+    basis <- create.fourier.basis(rangeval = range(time_grid), nbasis = nbasis)
+    Lfdobj <- vec2Lfd(c(0, (2 * pi / diff(range(time_grid)))^2, 0), range(time_grid))
+  } else if (basis_type == "bspline") {
+    basis <- create.bspline.basis(rangeval = range(time_grid), nbasis = nbasis)
+    Lfdobj <- int2Lfd(2)
+  } else {
+    stop("Unsupported basis type. Choose either 'fourier' or 'bspline'.")
+  }
+  
+  # Create the functional data object
+  fd_obj <- smooth.basis(time_grid, aligned_functions, basis)
+  
+  # Save the functional data object in the global environment
+  assign(paste0("aligned_fd_obj_", variable_name), fd_obj, envir = .GlobalEnv)
+  
+  return(fd_obj)
+}
+
+```
+
+
+```{r}
+# Convert aligned data for all variables
+aligned_fd_obj_count <- convert_aligned_data(aligned_fd_count$aligned_fd, "fourier", 5, optimal_lambda_count, "count")
+aligned_fd_obj_temp <- convert_aligned_data(aligned_fd_temp$aligned_fd, "fourier", 5, optimal_lambda_temp, "temp")
+aligned_fd_obj_hum <- convert_aligned_data(aligned_fd_hum$aligned_fd, "bspline", 5, optimal_lambda_hum, "hum")
+aligned_fd_obj_wind <- convert_aligned_data(aligned_fd_wind$aligned_fd, "bspline", 5, optimal_lambda_wind, "wind")
+aligned_fd_obj_visibility <- convert_aligned_data(aligned_fd_visibility$aligned_fd, "bspline", 5, optimal_lambda_visibility, "visibility")
+aligned_fd_obj_dew_temp <- convert_aligned_data(aligned_fd_dew_temp$aligned_fd, "bspline",5, optimal_lambda_dew_temp, "dew_temp")
+aligned_fd_obj_solar <- convert_aligned_data(aligned_fd_solar$aligned_fd, "fourier", 5, optimal_lambda_solar, "solar")
+aligned_fd_obj_rain <- convert_aligned_data(aligned_fd_rain$aligned_fd, "bspline", 5, optimal_lambda_rain, "rain")
+aligned_fd_obj_snow <- convert_aligned_data(aligned_fd_snow$aligned_fd, "bspline", 5, optimal_lambda_snow, "snow")
+```
+
+
+
+After we have extracted the functional curves now we will be building a mode without constant and one with contant. Then we will assess how the model performs using the metrics we have suggestion earlier. 
+
+
+##### Without Contsant 
+
+```{r}
+#Create functional data objects for weather variables of unaligned without constant
+temp_aligned <- aligned_fd_obj_temp$fd
+hum_aligned <- aligned_fd_obj_hum$fd
+wind_aligned <- aligned_fd_obj_wind$fd
+visibility_aligned <- aligned_fd_obj_visibility$fd
+dew_temp_aligned <- aligned_fd_obj_dew_temp$fd
+solar_aligned <- aligned_fd_obj_solar$fd
+rain_aligned <- aligned_fd_obj_rain$fd
+snow_aligned <- aligned_fd_obj_snow$fd
+```
+
+```{r}
+# Fit the functional linear model
+sfr_aligned_no_const <- fRegress(response ~ temp_aligned + hum_aligned + wind_aligned + visibility_aligned + dew_temp_aligned  + solar_aligned + rain_aligned + snow_aligned)
+```
+
+After we have run the regression we will extract all of the estimated beta coefficients of our model. 
+
+```{r}
+# Extract and plot the coefficient functions
+coef_functions_aligned_sfr_no_const <- sfr_aligned_no_const$betaestlist
+```
+
+Let us plot the coefficents and see how they behave throughout the day. 
+
+```{r}
+# Plot the coefficient functions
+par(mfrow = c(3, 3))
+plot(coef_functions_aligned_sfr_no_const$temp_aligned, main = "Coefficient Function for Temperature")
+plot(coef_functions_aligned_sfr_no_const$wind_aligned, main = "Coefficient Function for Windspeed")
+plot(coef_functions_aligned_sfr_no_const$hum_aligned, main = "Coefficient Function for Humidity")
+plot(coef_functions_aligned_sfr_no_const$visibility_aligned, main = "Coefficient Function for Visibility")
+plot(coef_functions_aligned_sfr_no_const$dew_temp_aligned, main = "Coefficient Function for Dew Temp")
+plot(coef_functions_aligned_sfr_no_const$solar_aligned, main = "Coefficient Function for Solar")
+plot(coef_functions_aligned_sfr_no_const$rain, main = "Coefficient Function for Rain")
+plot(coef_functions_aligned_sfr_no_const$snow, main = "Coefficient Function for Snow")
+
+par(mfrow = c(1, 1))
+
+
+```
+
+When inspecting the regression coefficients what we have to look at is the value and the sign of the coefficient. For example for temperature we can see that the coefficient is above zero in the late afternoon and in the evenings, suggesting that higher temperatures increases bike rents for the hours. On the other hand we can see that we have negative coefficient in the morning  indicates that higher temperature in the morning decreases the bike rental count. For wind speed we can see that higher wind speed very early in the morning around 5AM and late afternoon around 4PM does not deter bike rental counts. For humidity we can see that the influence of bike rental is above zero especially around the morning and late in the evenings. But humidity does have a negative impact from noon to later in the afternoon. 
+
+When inspecting visibility the coefficient fluctuates near zero. The coefficient for dew temperature predominantly falls below zero with the only positive influence witnessed slightly in the morning and in the late afternoon. Solar also has predominantly a negative association with the bike rentals. Similar to dew point we can only see two slight peaks around 10 AM and early in the evenings. Rain also falls below zero except for the afternoon and early in the mornings around 5AM. Lastly, we can see that snowfall has a negative influence on bike rental counts in the afternoon and early in the morning before 8AM.
+
+
+```{r}
+
+# Step 5: Calculate the fitted values and RMSE
+fitted_values_aligned_no_const <- sfr_aligned_no_const$yhatfdobj
+plot(fitted_values_aligned_no_const, response, type="p", pch="o", ylab = "Obserevd", xlab = "Predicted", main = "Aligned without Constant")
+lines(fitted_values_aligned_no_const, fitted_values_aligned_no_const, lty=2)
+RMSE_aligned <- sqrt(mean((response - fitted_values_aligned_no_const)^2))
+print(paste("RMSE Aligned Without Constant =", RMSE_aligned))
+
+```
+
+In terms of RMSE the model has 185.75 average prediction error and we also have included the plot in order to assess how close the observation fall on the predicted line. Then to follow with more evaluation we have decided to compute the $\text{R}^2$ by calculating the residuals of our model, which represent the difference between the observed and the predicted values. To compute the $\text{R}^2$  we computed the sum of squared errors which constitutes of squaring our residuals and also computed the SSE of the null which are the squared deviation of the values from the mean of our observed values. 
+
+The F-ration in this instance we did not use the constant so we used the observed degrees of freedom in the model without subtracting 1 for the constant. 
+
+
+```{r}
+#Compute the residuals for the smoothed model
+residuals_aligned_no_const <- response - fitted_values_aligned_no_const
+
+#Compute SSE for the smoothed full model
+SSE_full_aligned_no_const <- sum(residuals_aligned_no_const^2)
+
+
+#Compute SSE for the null model (only intercept)
+SSE_null_aligned <- sum((response - mean(response))^2)
+
+#Compute the squared multiple correlation (R²)
+rsq_aligned_no_const <- (SSE_null_aligned - SSE_full_aligned_no_const) / SSE_null_aligned
+print(paste("R² Aligned No Constant", rsq_aligned_no_const))
+
+
+# Degrees of freedom for the numerator (number of predictors) and denominator (residuals)
+n_observation <- length(response)  # Number of observations
+degree_freedom1 <- sfr_aligned_no_const$df  
+degree_freedom2 <- n_observation - degree_freedom1  # Degrees of freedom for the denominator (number of observations minus the number of predictors)
+
+Fratio_aligned_no_const <- ((SSE_null_aligned - SSE_full_aligned_no_const) / degree_freedom1) / (SSE_full_aligned_no_const / degree_freedom2)
+print(paste("Fratio Aligned Without Contsant:", Fratio_aligned_no_const))
+
+
+```
+
+```{r}
+qf(0.95, degree_freedom1,degree_freedom2)
+1-pf(Fratio_aligned_no_const,degree_freedom1,degree_freedom2)
+```
+
+
+The model explain about 80% of the variation and we can see that our F-ratio is approximately 30.09 which is an indication that the model fits better than compared to the null model. This means that the relevance of the covariates included in the model in explaining the variability that observed in the bike rentals. 
+
+
+##### With Constant 
+
+Previously we fit the model without a constant, now let us fit the model with a costant and take it one step further by adding a roughness smoothing parameter on the coefficients. 
+
+```{r}
+#Harmonic acceleration operator for Fourier bases
+Lcoef = c(0, (2 * pi / 23)^2, 0)  # Adjusting for a 23-hour basis
+harmaccelLfd = vec2Lfd(Lcoef, c(0, 23))
+
+#Second-derivative penalty for B-spline bases
+Lfd_bspline = int2Lfd(2)
+
+
+#Create functional data objects for weather condition variables 
+# Assuming we use the aligned data for this example and using the intercept
+xfdlist_aligned <- list(intercept_aligned = rep(1, length(response)), 
+  temp_aligned <- aligned_fd_obj_temp$fd,
+  hum_aligned <- aligned_fd_obj_hum$fd,
+  wind_aligned <- aligned_fd_obj_wind$fd,
+  vibility_aligned <- aligned_fd_obj_visibility$fd,
+  dew_temp_aligned <- aligned_fd_obj_dew_temp$fd,
+  solar_aligned <- aligned_fd_obj_solar$fd,
+  rain_aligned <- aligned_fd_obj_rain$fd,
+  snow_aligned <- aligned_fd_obj_snow$fd)
+
+#Create basis functions for each covariate and include the constant term
+#Basis and smoothing for the constant (intercept)
+betabasis_const_aligned <- create.constant.basis(c(0, 23))
+betafd_const_aligned <- fd(0, betabasis_const_aligned)
+betafdPar_const_aligned <- fdPar(betafd_const_aligned)
+
+#Basis and smoothing for Fourier bases
+betabasis_temp_aligned <- create.fourier.basis(c(0, 23), 5)
+lambda_temp <- 10^4  # Set an appropriate smoothing parameter
+betafdPar_temp_aligned <- fdPar(betabasis_temp_aligned, harmaccelLfd, lambda_temp)
+
+
+betabasis_solar_aligned <- create.fourier.basis(c(0, 23), 5)
+lambda_solar <- 10^4
+betafdPar_solar_aligned <- fdPar(betabasis_solar_aligned, harmaccelLfd, lambda_solar)
+
+#Basis and smoothing for B-spline bases
+betabasis_hum_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_hum <- 10^2 # Adjust the smoothing parameter for B-splines
+betafdPar_hum_aligned <- fdPar(betabasis_hum_aligned, Lfd_bspline, lambda_hum)
+
+betabasis_wind_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_wind <- 10^2
+betafdPar_wind_aligned <- fdPar(betabasis_wind_aligned, Lfd_bspline, lambda_wind)
+
+betabasis_visibility_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_visibility <- optimal_lambda_visibility
+betafdPar_visibility_aligned <- fdPar(betabasis_visibility_aligned, Lfd_bspline, lambda_visibility)
+
+betabasis_dew_temp_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_dew_temp <-10^2
+betafdPar_dew_temp_aligned <- fdPar(betabasis_dew_temp_aligned, Lfd_bspline, lambda_dew_temp)
+
+betabasis_rain_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_rain <- optimal_lambda_rain
+betafdPar_rain_aligned <- fdPar(betabasis_rain_aligned, Lfd_bspline, lambda_rain)
+
+betabasis_snow_aligned <- create.bspline.basis(c(0, 23), 5)
+lambda_snow <-10^2
+betafdPar_snow_aligned <- fdPar(betabasis_snow_aligned, Lfd_bspline, lambda_snow)
+
+#Combine all into the betalist, including the constant term
+betalist_aligned <- list(
+    intercept_aligned = betafdPar_const_aligned,  # Including the constant term in betalist
+    temp_aligned_beta = betafdPar_temp_aligned,
+    hum_aligned_beta = betafdPar_hum_aligned,
+    wind_aligned_beta = betafdPar_wind_aligned,
+    visibility_aligned_beta = betafdPar_visibility_aligned,
+    dew_temp_aligned_beta = betafdPar_dew_temp_aligned,
+    solar_aligned_beta = betafdPar_solar_aligned,
+    rain_aligned_beta = betafdPar_rain_aligned,
+    snow_aligned_beta = betafdPar_snow_aligned
+)
+
+```
+
+
+
+```{r}
+# Fit the functional linear model
+sfr_aligned <- fRegress(response ,xfdlist_aligned, betalist_aligned )
+```
+
+
+```{r}
+# Step 4: Interpretation
+# Extract and plot the coefficient functions
+coef_functions_aligned_sfr <- sfr_aligned$betaestlist
+```
+
+```{r}
+# Plot the coefficient functions
+par(mfrow = c(3, 3))
+plot(coef_functions_aligned_sfr$intercept_aligned, main = "Coefficient Function for Intercept")
+plot(coef_functions_aligned_sfr$temp_aligned_beta, main = "Coefficient Function for Temperature")
+plot(coef_functions_aligned_sfr$wind_aligned_beta, main = "Coefficient Function for Windspeed")
+plot(coef_functions_aligned_sfr$hum_aligned_beta, main = "Coefficient Function for Humidity")
+plot(coef_functions_aligned_sfr$visibility_aligned_beta, main = "Coefficient Function for Visibility")
+plot(coef_functions_aligned_sfr$dew_temp_aligned_beta, main = "Coefficient Function for Dew Temp")
+plot(coef_functions_aligned_sfr$solar_aligned_beta, main = "Coefficient Function for Solar")
+plot(coef_functions_aligned_sfr$rain_aligned_beta, main = "Coefficient Function for Rain")
+plot(coef_functions_aligned_sfr$snow_aligned_beta, main = "Coefficient Function for Snow")
+
+par(mfrow = c(1, 1))
+```
+With all the variables held constant we can see that the intercept is at -901 units of bike rented which is counter intuitive given that the bike rentals This maybe due to the fact that we are using the aligned functional curves may distort the units. Higher temperature in the afternoon. Higher wind speed in the afternoon discourages bike renting starting from noon. Similarly, humidity also discourages bike rentals starting from noon but then has a positive influence after 8 PM in the evening. Visibility encourages bike rentals at noon but also has a negative influence in the morning and slightly in the evenings too. Dew temperature has predominantly negative influence on bike rentals except for slight positive influence in the later afternoon during commute hours. Solar has a predominately negative influence too except for in the late afternoons. Where also has a predominantly negative influence as expected except for in the late nights after midnight  and late afternoon. Lastly, we can see that snow also positive influence only during noon. 
+
+
+```{r}
+#Calculate the fitted values and RMSE
+fitted_values_aligned <- sfr_aligned$yhatfdobj
+plot(fitted_values_aligned, response, type="p", pch="o", ylab = "Obserevd", xlab = "Predicted", main = "Aligned with Constant")
+lines(fitted_values_aligned, fitted_values_aligned, lty=2)
+RMSE_aligned <- sqrt(mean((response - fitted_values_aligned)^2))
+print(paste("RMSE Aligned With Constant =", RMSE_aligned))
+```
+
+When compared to the model without the constant, the RMSE is slightly higher with around 186.80. This means that on average the predictions are off by about 186.80 units. 
+
+
+```{r}
+#Compute the residuals for the smoothed model
+residuals_aligned <- response - fitted_values_aligned
+
+#Compute SSE for the smoothed full model
+SSE_full_aligned <- sum(residuals_aligned^2)
+
+
+#Compute SSE for the null model (only intercept)
+SSE_null_aligned <- sum((response - mean(response))^2)
+
+#Compute the squared multiple correlation (R²)
+rsq_aligned <- (SSE_null_aligned - SSE_full_aligned) / SSE_null_aligned
+print(paste("R² Aligned", rsq_aligned))
+
+
+# Degrees of freedom for the numerator (number of predictors) and denominator (residuals)
+n_observation <- length(response)  # Number of observations
+degree_freedom1 <- sfr_aligned$df - 1  # Degrees of freedom for the numerator (number of predictors minus 1 for the intercept)
+degree_freedom2 <- n_observation - degree_freedom1  # Degrees of freedom for the denominator (number of observations minus the number of predictors)
+
+Fratio_aligned <- ((SSE_null_aligned - SSE_full_aligned) / degree_freedom1) / (SSE_full_aligned / degree_freedom2)
+print(paste("Fratio Aligned With Constant", Fratio_aligned))
+```
+
+```{r}
+qf(0.95, degree_freedom1,degree_freedom2)
+1-pf(Fratio_aligned,degree_freedom1,degree_freedom2)
+```
+
+The $\text{R}^2$ is very close of the model with and without the constant is close to each other. So we can say that both the models have explain a similar proportion of the variance in the response variable. Where as the F-ratio is slightly higher indicating a better statistical significance between the predictors and the response variables. 
+
+
+#### Unaligned Regression
+
+The unaligned regression will mainly depend on the functional curves that have been penalized. In order to conduct a comparison with the aligned data we will be using the same basis that was used to convert the aligned data, that means we will be recreating our values for our functional curves anew by using the smoothing roughness penalty
+
+##### No Constant 
+
+So we will start with by regression the unaligned curve with no constant and get the results for that. 
+
+
+```{r, include = FALSE}
+# Apply the function to each variable
+count_fd_opt_new <-find_optimal_lambda_and_create_plots(bike$count, "fourier", 5, "count", loglam)
+temp_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$temp, "fourier", 5, "temp", loglam)
+hum_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$hum, "bspline", 5, "hum", loglam)
+wind_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$wind, "bspline", 5, "wind", loglam)
+visibility_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$visibility, "bspline", 5, "visibility", loglam)
+dew_temp_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$dew_temp, "bspline", 5, "dew_temp", loglam)
+solar_fd_opt_new <-find_optimal_lambda_and_create_plots(bike$solar, "fourier", 5, "solar", loglam)
+rain_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$rain_transformed, "bspline",5, "rain", loglam)
+snow_fd_opt_new <- find_optimal_lambda_and_create_plots(bike$snow_transformed, "bspline",5, "snow", loglam)
+```
+
+
+
+```{r}
+#Create functional data objects for weather variables of unaligned
+# Assuming we use the unaligned data for this example
+unaligned_temp <- temp_fd_opt_new$fd
+unaligned_hum <- hum_fd_opt_new$fd
+unaligned_wind <- wind_fd_opt_new$fd
+unaligned_visibility <- visibility_fd_opt_new$fd
+unaligned_dew_temp <- dew_temp_fd_opt_new$fd
+unaligned_solar <- solar_fd_opt_new$fd
+unaligned_rain <- rain_fd_opt_new$fd
+unaligned_snow <- snow_fd_opt_new$fd
+```
+
+
+
+
+```{r}
+# Fit the functional linear model
+sfr_unaligned_no_const <- fRegress(response ~  unaligned_temp + unaligned_hum + unaligned_wind + unaligned_snow + unaligned_rain + unaligned_dew_temp + unaligned_visibility + unaligned_solar) 
+```
+
+```{r}
+# Extract and plot the coefficient functions
+coef_functions_unaligned_no_const <- sfr_unaligned_no_const$betaestlist
+```
+
+
+
+```{r}
+# Plot the coefficient functions
+par(mfrow = c(3, 3))
+
+plot(coef_functions_unaligned_no_const$unaligned_temp, main = "Coefficient Function for Temperature")
+plot(coef_functions_unaligned_no_const$unaligned_wind, main = "Coefficient Function for Windspeed")
+plot(coef_functions_unaligned_no_const$unaligned_hum, main = "Coefficient Function for Humidity")
+plot(coef_functions_unaligned_no_const$unaligned_visibility, main = "Coefficient Function for Visibility")
+plot(coef_functions_unaligned_no_const$unaligned_dew_temp, main = "Coefficient Function for Dew Temp")
+plot(coef_functions_unaligned_no_const$unaligned_rain, main = "Coefficient Function for Rain")
+plot(coef_functions_unaligned_no_const$unaligned_snow, main = "Coefficient Function for Snow")
+plot(coef_functions_unaligned_no_const$unaligned_solar, main = "Coefficient Function for Solar")
+
+
+
+par(mfrow = c(1, 1))
+```
+With the unaligned temperature without a constant we can see there is more variation throughout the day for temperature. The result that we are observing is differnt than what we have seen for aligned functional curves. We can see that higher temperatures in the morning and in the afternoon deter bike rentals. Where as higher temperatures in the evenings and in later through the night encourages bike rentals. For windspeed the results is similar with higher wind speed experienced early in the morning not deterring bike rentals where as in after noon we can see a decline in the bikes that are rented. We can also see for humidity it is deters bike rentals especially in the later afternoon. Visibility again fluctuates around zero with higher visibility having a positive influence on bike rentals in the late afternoon. Dew temperature is predominantly negative, except for a slight positive influence that is witnessed in the morning and int the later afternoon. Again rain also have a negative influence on bike rentals except around noon. Snowfall has a negative influence on bike rentals in the morning. Lastly, solar has predominantly positive influence on bike rentals except for in the late afternoon. 
+
+
+```{r}
+# Step 5: Calculate the fitted values and RMSE
+fitted_values_unaligned_no_const <- sfr_unaligned_no_const$yhatfdobj
+plot(fitted_values_unaligned_no_const, response, type="p", pch="o", ylab = "Observed", xlab = "Predicted", main = "Unaligned without Constant")
+lines(fitted_values_unaligned_no_const, fitted_values_unaligned_no_const, lty=2)
+RMSE <- sqrt(mean((response - fitted_values_unaligned_no_const)^2))
+print(paste("RMSE Unaligned with No Constant =", RMSE))
+```
+
+
+The RMSE for the unaligned without a constant is aprroximately 170, which performs better than the aligned models. This means that the predictions are off by about 170 units on average. 
+
+```{r}
+#Compute the residuals
+residuals_unaligned_no_const <- response - fitted_values_unaligned_no_const
+
+#Compute SSE for the full model
+SSE_full_unaligned_no_const <- sum(residuals_unaligned_no_const^2)
+
+
+#Compute SSE for the null model
+SSE_null <- sum((response - mean(response))^2)
+
+
+# Step 5: Compute the squared multiple correlation (R²)
+r_squared_unaligned_no_const <- (SSE_null - SSE_full_unaligned_no_const) / SSE_null
+print(paste("R² Unaligned with No Constant", r_squared_unaligned_no_const))
+
+# Step 6: Compute the F-ratio
+# Degrees of freedom for the numerator (number of predictors) and denominator (residuals)
+n_observation <- length(response)  # Number of observations
+df1 <- sfr_unaligned_no_const$df - 1  # Degrees of freedom for the numerator (number of predictors minus 1 for the intercept)
+df2 <- n_observation - df1  # Degrees of freedom for the denominator (number of observations minus the number of predictors)
+
+Fratio_unaligned_no_const <- ((SSE_null - SSE_full_unaligned_no_const) / df1) / (SSE_full_unaligned_no_const / df2)
+print(paste("Fratio Unaligned with No Constant ", Fratio_unaligned_no_const))
+```
+
+The $\text{R}^2$ and the F-ratio is also higher for the unaligned model without a constant when compared to the aligned models. So we have a higher level of variance that is explained and statistical significance with the unaligned data without a constant. 
+
+```{r}
+qf(0.95, df1, df2)
+1-pf( Fratio_unaligned_no_const,df1,df2)
+```
+
+
+##### With Constant 
+
+
+```{r}
+# Step 1: Create the xfdlist with a constant term
+xfdlist_unaligned <- list(
+    intercept_unaligned <- rep(1, length(response)),  # Adding the constant term here
+    unaligned_temp_const <- temp_fd_opt_new$fd,
+    unaligned_hum_const <- hum_fd_opt_new$fd,
+    unaligned_wind_const <- wind_fd_opt_new$fd,
+    unaligned_visibility_const <- visibility_fd_opt_new$fd,
+    unaligned_dew_temp_const <- dew_temp_fd_opt_new$fd,
+    unaligned_solar_const <- solar_fd_opt_new$fd,
+    unaligned_rain_const <- rain_fd_opt_new$fd,
+    unaligned_snow_const <- snow_fd_opt_new$fd
+)
+
+#Create basis functions for each covariate and include the constant term
+# Creating constant basis for the intercept (to be used in betalist)
+betabasis_const_unaligned <- create.constant.basis(c(0, 23))
+betafd_const_unaligned <- fd(0, betabasis_const_unaligned)
+betafdPar_const_unaligned <- fdPar(betafd_const_unaligned)
+
+
+#Basis and smoothing for Fourier bases
+betabasis_temp_unaligned <- create.fourier.basis(c(0, 23), 5)
+lambda_temp <- 10^4  # Set an appropriate smoothing parameter
+betafdPar_temp_unaligned <- fdPar(betabasis_temp_unaligned, harmaccelLfd, lambda_temp)
+
+
+betabasis_solar_unaligned <- create.fourier.basis(c(0, 23), 5)
+lambda_solar <- 10^4
+betafdPar_solar_unaligned <- fdPar(betabasis_solar_unaligned, harmaccelLfd, lambda_solar)
+
+#Basis and smoothing for B-spline bases
+betabasis_hum_unaligned <- create.bspline.basis(c(0, 23), 5)
+lambda_hum <- 10^2  # Adjust the smoothing parameter for B-splines
+betafdPar_hum_unaligned <- fdPar(betabasis_hum_unaligned, Lfd_bspline, lambda_hum)
+
+betabasis_wind_unaligned <- create.bspline.basis(c(0, 23), 5)
+lambda_wind <- 10^2
+betafdPar_wind_unaligned <- fdPar(betabasis_wind_unaligned, Lfd_bspline, lambda_wind)
+
+betabasis_visibility_unaligned <- create.bspline.basis(c(0, 23), 5)
+lambda_visibility_unaligned <- 10^2
+betafdPar_visibility_unaligned <- fdPar(betabasis_visibility_unaligned, Lfd_bspline, lambda_visibility)
+
+betabasis_dew_temp_unaligned <- create.fourier.basis(c(0, 23), 5)
+lambda_dew_temp <- 10^4
+betafdPar_dew_temp_unaligned <- fdPar(betabasis_dew_temp_unaligned, Lfd_bspline, lambda_dew_temp)
+
+betabasis_rain_unaligned <- create.bspline.basis(c(0, 23), 5)
+lambda_rain <- 10^2
+betafdPar_rain_unaligned <- fdPar(betabasis_rain_unaligned, Lfd_bspline, lambda_rain)
+
+betabasis_snow_unaligned <- create.bspline.basis(c(0, 23), 5)
+lambda_snow <- 10^2
+betafdPar_snow_unaligned <- fdPar(betabasis_snow_unaligned, Lfd_bspline, lambda_snow)
+
+#Combine all into the betalist, including the constant term
+betalist_unaligned <- list(
+    intercept_unaligned = betafdPar_const_aligned,  # Including the constant term in betalist
+    temp_unaligned_beta = betafdPar_temp_unaligned,
+    hum_unaligned_beta = betafdPar_hum_unaligned,
+    wind_unaligned_beta = betafdPar_wind_unaligned,
+    visibility_unaligned_beta = betafdPar_visibility_unaligned,
+    dew_temp_unaligned_beta = betafdPar_dew_temp_unaligned,
+    solar_unaligned_beta = betafdPar_solar_unaligned,
+    rain_unaligned_beta = betafdPar_rain_unaligned,
+    snow_unaligned_beta = betafdPar_snow_unaligned
+)
+
+#Fit the functional linear model using the unaligned covariates and the smoothed coefficents 
+sfr_unaligned_const <- fRegress(response, xfdlist_unaligned, betalist_unaligned)
+
+```
+
+
+
+```{r}
+# Extract and plot the coefficient functions
+coef_functions_unaligned_const <- sfr_unaligned_const$betaestlist
+
+# Plot the coefficient functions
+par(mfrow = c(3, 3))
+plot(coef_functions_unaligned_const$intercept_unaligned, main = "Coefficient Function for Intercept")
+plot(coef_functions_unaligned_const$temp_unaligned_beta, main = "Coefficient Function for Temperature")
+plot(coef_functions_unaligned_const$hum_unaligned_beta, main = "Coefficient Function for Humidity")
+plot(coef_functions_unaligned_const$wind_unaligned_beta, main = "Coefficient Function for Windspeed")
+plot(coef_functions_unaligned_const$visibility_unaligned_beta, main = "Coefficient Function for Visibility")
+plot(coef_functions_unaligned_const$dew_temp_unaligned_beta, main = "Coefficient Function for Dew Temp")
+plot(coef_functions_unaligned_const$solar_unaligned_beta, main = "Coefficient Function for Solar")
+plot(coef_functions_unaligned_const$rain_unaligned_beta, main = "Coefficient Function for Rain")
+plot(coef_functions_unaligned_const$snow_unaligned_beta, main = "Coefficient Function for Snow")
+
+```
+When we compare the constant coefficient with the aligned model we can see that the intercept is around 81 bike rental units while keeping all of the covariates constant, which makes more sense and is more interpretable. Temperature has a positive influence in the early afternoon. Humidity on the other hand it has a negative influence on bike rentals for a majority of the day, especially around the afternoon. Wind speed also has a negative influence on the bike rental especially starting from the later afternoon. Visibility hovers around zero and as it we can see as visibility increases it slightly increases the bike rentals in the afternoon. Dew temperature increase has a positive influence on the bike rentals especially in the late afternoon. Solar radiation has a positive influence on bike rentals especially early in the mornings until noon. Rain and snowfall as expected have a predominantly negative influence for a majority of the day. Except a slight increase at noon and later afternoon for rain fall and snow fall, respectively. 
+
+
+```{r}
+# Calculate the fitted values and RMSE
+fitted_values_unaligned_const <- sfr_unaligned_const$yhatfdobj
+plot(fitted_values_unaligned_const, response, type="p", pch="o", main="Fitted vs Actual Values", ylab = "Observed", xlab = "Predicted")
+lines(fitted_values_unaligned_const, fitted_values_unaligned_const, lty=2)
+RMSE <- sqrt(mean((response - fitted_values_unaligned_const)^2))
+print(paste("RMSE Unaligned with Constant =", RMSE))
+```
+
+For the model with unaligned curves and a constant we can see that 81% of the variance is explained by the response. This is slighlty lower than the model with the unaligned and without a constant. 
+
+
+```{r}
+#Compute the residuals
+residuals_unaligned_const <- response - fitted_values_unaligned_const
+
+#Compute SSE for the full model
+SSE_full_unaligned_const <- sum(residuals_unaligned_const^2)
+
+
+#Compute SSE for the null model (only intercept)
+SSE_null <- sum((response - mean(response))^2)
+
+
+# Step 5: Compute the squared multiple correlation (R²)
+r_squared_unaligned_const <- (SSE_null - SSE_full_unaligned_const) / SSE_null
+print(paste("R² Unaligned with Constant", r_squared_unaligned_const))
+
+# Step 6: Compute the F-ratio
+# Degrees of freedom for the numerator (number of predictors) and denominator (residuals)
+n_observation <- length(response)  # Number of observations
+df1 <- sfr_unaligned_const$df - 1  # Degrees of freedom for the numerator (number of predictors minus 1 for the intercept)
+df2 <- n_observation - df1  # Degrees of freedom for the denominator (number of observations minus the number of predictors)
+
+Fratio_unaligned <- ((SSE_null - SSE_full_unaligned_const) / df1) / (SSE_full_unaligned_const / df2)
+print(paste("Fratio Unaligned with Constant ", Fratio_unaligned))
+
+```
+
+```{r}
+qf(0.95, df1,df2)
+1-pf(Fratio_unaligned,df1,df2)
+```
+
+
+For the model with unaligned curves and a constant we can see that 81% of the variance is explained by the response. This is slightly lower than the model with the unaligned and without a constant. However the unaligned with a constant does have a higher F-ration when we compare it with counterpart the unaligned without a constant.
+
+
+
+#### FPCA Regression
+
+During the pre-processing section we had created functional principal component scores for the saturated basis of all our variables and we had kept it to maximum three principal scores. We will be using those truncated scores as a way to build our functional regression. We start by extracting the scores from our FPCAs for each of the variables which will be used in building our linear model. Then we have also extracted the harmonics to capture the variation in the functional data.  
+
+```{r}
+# Let use the FPCA scores
+temp_scores <- fpca_temp$scores
+hum_scores <- fpca_hum$scores
+wind_scores <- fpca_wind$scores
+visibility_scores <- fpca_visibility$scores
+dew_temp_scores <- fpca_dew_temp$scores
+solar_scores <- fpca_solar$scores
+rain_scores <- fpca_rain$scores
+snow_scores <- fpca_snow$scores
+
+
+# Extract FPCA harmonics for each variable
+harmonics_list <- list(
+ temp = fpca_temp$harmonics,
+  hum = fpca_hum$harmonics,
+  wind = fpca_wind$harmonics,
+  visibility = fpca_visibility$harmonics,
+  dew_temp = fpca_dew_temp$harmonics,
+  solar = fpca_solar$harmonics,
+  rain = fpca_rain$harmonics,
+  snow = fpca_snow$harmonics
+)
+
+
+# Fit the functional linear model using fRegress
+flm <- lm(response ~ temp_scores + hum_scores + wind_scores + visibility_scores + dew_temp_scores + solar_scores + rain_scores + snow_scores)
+pcacoef <- summary(flm)$coef
+
+```
+
+After running the linear regression using our response variables and our functional scores we will be extracting the coefficients for all of our principal scores, in our case these are three. Now as we have done before we will be assessing the estimates of the coefficients. We have created a function that will evaluate the harmonics to which we will be multiplying based on the coefficient for each of the score and the evaluated harmonics for each of the variables. 
+
+```{r}
+plot_regression_estimates <- function(harmonics, pcacoef, time_grid, variable_name, variable_index) {
+  # Evaluate the harmonics at the grid points
+  harmonics_vals <- eval.fd(time_grid, harmonics)
+  
+  # Ensure harmonics_vals has the correct number of components
+  harmonics_vals1 <- harmonics_vals[,1]
+  harmonics_vals2 <- harmonics_vals[,2]
+  harmonics_vals3 <- harmonics_vals[,3]
+  
+  # Calculate the regression coefficients (betafd) using the evaluated harmonics
+  betafd <- pcacoef[variable_index * 3 - 1, 1] * harmonics_vals1 +
+            pcacoef[variable_index * 3, 1] * harmonics_vals2 +
+            pcacoef[variable_index * 3 + 1, 1] * harmonics_vals3
+  
+  # Plot the regression coefficients without confidence intervals
+  plot(time_grid, betafd, type = "l", xlab = "Hour", ylab = "Regression Coef.", lwd = 2, main = variable_name)
+  # Add a dashed line at zero
+  abline(h = 0, lty = 2)
+}
+```
+
+We will be using this function to iterate through the variables and plot the results on a grid. 
+
+
+```{r}
+
+# Define a grid over the domain (e.g., hours of the day)
+time_grid <- seq(0, 23, length.out = 100) 
+# Set up the plotting area to have multiple plots for estimates only
+par(mfrow = c(3, 3))  # Adjust the layout as needed
+
+# Loop through each variable and plot the regression coefficients without confidence intervals
+variable_index <- 1
+for (variable_name in names(harmonics_list)) {
+  harmonics <- harmonics_list[[variable_name]]
+  plot_regression_estimates(harmonics, pcacoef, time_grid, variable_name, variable_index)
+  variable_index <- variable_index + 1
+}
+
+# Reset the plotting area to default
+par(mfrow = c(1, 1))
+```
+
+When conducting the regression using the FPCA we can see that temperature has a positive impact on the bike rentals in ther afternoon. Where as humidity has a negative influence on the bike rental throughout the day except for in the evenings. Wind speed has a negative impact especially in the afternoon. Visibility's coefficient is very small and doesn't impact the bike rentals as much as the other weather conditions. Dew temperature does not deter bike rentals during the day especially in the morning through the afternoon. Surprisingly, snow does not have any deterrence on the bike renting as much as we expected. Solar encourages bike renting during midday but has a negative impact in the afternoon. Rain fall and snow  predominantly have a negative impact but we can see snow has a positive impact in the late afternoon. 
+
+
+
+
+```{r}
+plot_regression_with_ci <- function(harmonics, pcacoef, time_grid, variable_name, variable_index) {
+  # Evaluate the harmonics at the grid points
+  harmonics_vals <- eval.fd(time_grid, harmonics)
+  
+  # Ensure harmonics_vals has the correct number of components
+  harmonics_vals1 <- harmonics_vals[, 1]
+  harmonics_vals2 <- harmonics_vals[, 2]
+  harmonics_vals3 <- harmonics_vals[, 3]
+  
+  # Calculate the regression coefficients (betafd) using the evaluated harmonics
+  betafd <- pcacoef[variable_index * 3 - 1, 1] * harmonics_vals1 +
+            pcacoef[variable_index * 3, 1] * harmonics_vals2 +
+            pcacoef[variable_index * 3 + 1, 1] * harmonics_vals3
+  
+  # Calculate the variance of the coefficients (betavar) using the evaluated harmonics
+  coefvar <- pcacoef[, 2]^2
+  
+  # Calculate the variance of the functional regression coefficients
+  betavar <- coefvar[variable_index * 3 - 1] * harmonics_vals1^2 +
+             coefvar[variable_index * 3] * harmonics_vals2^2 +
+             coefvar[variable_index * 3 + 1] * harmonics_vals3^2
+  
+  # Plot the regression coefficients with their confidence intervals
+  plot(time_grid, betafd, type = "l", xlab = "Hour", ylab = "Regression Coef.", lwd = 2, ylim = c(-60, 60), main = variable_name)
+  lines(time_grid, betafd + 2 * sqrt(betavar), lty = 2, lwd = 1)
+  lines(time_grid, betafd - 2 * sqrt(betavar), lty = 2, lwd = 1)
+   # Add a dashed line at zero
+  abline(h = 0, lty = 2)
+}
+
+
+```
+
+```{r}
+# Define a grid over the domain (e.g., hours of the day)
+time_grid <- seq(0, 23, length.out = 23)  # Adjust this grid according to your data
+
+# Set up the plotting area to have multiple plots
+par(mfrow = c(3, 3))  # Adjust the layout as needed
+
+# Loop through each variable and plot the regression coefficients with confidence intervals
+variable_index <- 1
+for (variable_name in names(harmonics_list)) {
+  harmonics <- harmonics_list[[variable_name]]
+  plot_regression_with_ci(harmonics, pcacoef, time_grid, variable_name, variable_index)
+  variable_index <- variable_index + 1
+}
+```
+
+We have plotted the confidence interval of the estimated coefficients of the FPCA regression. In this case the intervals show the uncertainty around teh estimates. What is interesting is that visibility which has consistently been around zero does have very narrow confidence interval which is not visible to the naked eye. We can see that most of the confidence interval are narrow except for the solar confidence interval. 
+
+
+### FANOVA
+
+As part of last analysis we are conducting a FANOVA. In this stage we will be treating the response as a functional curve and we will represent the seasons in a design matrix. In order to do this we will be using several functions. We start by identifying the seasons in the data set and label them accordingly as they appear in our dataset. 
+
+The first function is to perform the FANOVA where we use the functional data 
+
+```{r}
+# Create a season vector for each unique day
+season_vector <- bike %>%
+  group_by(date) %>%
+  summarize(season = unique(season)) %>%
+  pull(season)
+
+
+# Extract indices for each season
+autumn_days <- which(season_vector == "Autumn")
+spring_days <- which(season_vector == "Spring")
+summer_days <- which(season_vector == "Summer")
+winter_days <- which(season_vector == "Winter")
+
+# Create Labels for the Seasons
+season_labels <- c("Constant", "Winter", "Spring", "Summer", "Autumn")
+  
+```
+
+
+The first function is to perform the FANOVA where we use the functional data, where we set up the functional response and a design matrix to represent teh different seasons for the regression and add one addition column for the constant. Then we will set up a basis for the regression functions and also set up a coefficient matrix that need to be in a functional form. We continue to setup the betalist for the functional parameter before we conduct the regression. In this section we will get the estimates by plotting the coefficients for each season and the predicted functions for all of the seasons. 
+
+
+
+```{r}
+perform_fANOVA <- function(fd_obj, data, fRegress_name, xfdlist_name, betaestlist_name, yhatfdobj_name, unaligned_bike_count_name) {
+  # Extract the functional data from the functional object
+  bike_count <- fd_obj$fd
+  
+  # Identify the Seasons
+  seasons <- unique(data$season)
+  
+  # Extract unique days
+  unique_days <- unique(data$date)
+  
+  # Initialize a vector to store the season for each unique day
+  season_vector <- c()
+  
+  # Loop through unique days and store the season
+  for (i in 1:length(unique_days)) {
+    day_data <- data[data$date == unique_days[i], ]
+    season <- unique(day_data$season)
+    season_vector <- c(season_vector, season)
+  }
+  
+  # Extract indices for each season
+  autumn_days <- which(season_vector == 1)
+  spring_days <- which(season_vector == 2)
+  summer_days <- which(season_vector == 3)
+  winter_days <- which(season_vector == 4)
+  
+  # Set Up the Design Matrix
+  n_days <- length(unique_days)  # Number of unique days
+  design_matrix <- matrix(0, nrow = n_days, ncol = length(seasons) + 1)
+  design_matrix[, 1] <- 1  # Grand mean
+  
+  # Assign indices to the design matrix
+  design_matrix[winter_days, 2] <- 1
+  design_matrix[spring_days, 3] <- 1
+  design_matrix[summer_days, 4] <- 1
+  design_matrix[autumn_days, 5] <- 1
+  
+  # Add a Dummy Constraint Observation
+  dummy_row <- c(0, rep(1, length(seasons)))
+  design_matrix <- rbind(design_matrix, dummy_row)
+  
+  
+  # Prepare the Functional Data Object
+  coef <- bike_count$coefs
+  coef <- cbind(coef, matrix(0, bike_count$basis$nbasis, 1))
+  bike_count$coefs <- coef
+  
+  # Store the modified bike_count object
+  assign(unaligned_bike_count_name, bike_count, envir = .GlobalEnv)
+  
+  # Set Up xfdlist
+  p <- ncol(design_matrix)  # Number of predictors (should be 5)
+  xfdlist <- vector("list", p)
+  for (j in 1:p) {
+    xfdlist[[j]] <- design_matrix[, j]
+  }
+  
+  # Set Up the Basis for the Regression Functions
+  Lcoef <- c(0, (2 * pi / 23)^2, 0)  # Adjusting for a 23-hour basis
+  harmaccelLfd <- vec2Lfd(Lcoef, c(0, 23))
+  
+  nbetabasis <- 10  # Number of basis functions
+  basis_range <- c(0, 23)  # Range of hours
+  betabasis <- create.fourier.basis(basis_range, nbetabasis)
+  
+  # Create a coefficient matrix with the correct dimensions
+  coef_matrix <- matrix(0, betabasis$nbasis, 1)
+  
+  # Create the functional data object
+  betafd <- fd(coef_matrix, betabasis)
+  
+  # Set up the functional parameter object
+  estimate <- TRUE
+  lambda <- 0  # No penalty
+  betafdPar <- fdPar(betafd, harmaccelLfd, lambda, estimate)
+  
+  # Create betalist
+  betalist <- vector("list", p)
+  for (j in 1:p) {
+    betalist[[j]] <- betafdPar
+  }
+  
+  # Perform the Regression
+  fRegressList <- fRegress(bike_count, xfdlist, betalist)
+  
+  # Assign the fRegressList, betaestlist, and yhatfdobj to the specified names in the global environment
+  assign(fRegress_name, fRegressList, envir = .GlobalEnv)
+  assign(betaestlist_name, fRegressList$betaestlist, envir = .GlobalEnv)
+  assign(yhatfdobj_name, fRegressList$yhatfdobj, envir = .GlobalEnv)
+  assign(xfdlist_name, xfdlist, envir = .GlobalEnv)
+  
+  # Compute the Regression Coefficient Functions and Predicted Functions
+  betaestlist <- fRegressList$betaestlist
+  yhatfdobj <- fRegressList$yhatfdobj
+  
+  # Define colors for the seasons
+  season_colors <- c("blue", "red", "green", "purple")
+  
+  # Plot the Regression Functions
+  par(mfrow = c(3, 2))
+  for (j in 1:length(betaestlist)) {
+    plot(betaestlist[[j]]$fd, xlab = "Hour", ylab = "Coefficient", main = paste("Regression Coefficient for", season_labels[[j]]))
+  }
+  
+  # Plot the Predicted Functions
+  plot(yhatfdobj, xlab = "Hour", ylab = "Predicted Count", main = "Predicted Bike Rental Count", col = season_colors)
+  
+  # Add a legend
+  legend("topright", legend = c("Winter", "Spring", "Summer", "Autumn"), col = season_colors, lty = 1, cex = 0.8)
+  
+  # Reset the plotting area to default
+  par(mfrow = c(1, 1))
+  
+  return(list(fRegressList = fRegressList, betaestlist = fRegressList$betaestlist, yhatfdobj = fRegressList$yhatfdobj, xfdlist = fRegressList$xfdlist))
+}
+```
+
+
+
+In this section we extract the predicted values and the actual values at fine points so that we can cimpoute the residual matrix. We then compute the variance of the resisuals. 
+
+```{r}
+compute_error_metrics <- function(yhatfdobj, bike_count, length_out = 10000) {
+  # Compute the predicted values at fine time points
+  hours_fine <- seq(0, 23, length.out = length_out)
+  yhatmat <- eval.fd(hours_fine, yhatfdobj)
+  
+  # Compute the actual values at fine time points
+  ymat <- eval.fd(hours_fine, bike_count)
+  
+  # Compute the residual matrix
+  temprmat <- ymat - yhatmat
+  
+  # Calculate the covariance of the residuals
+  SigmaE <- var(t(temprmat))
+  
+  return(list(SigmaE = SigmaE, hours_fine = hours_fine))
+}
+
+```
+
+We then also need to plot the standard error we had computed in the previous function. 
+
+```{r}
+plot_error_metrics <- function(SigmaE, hours_fine) {
+  # Plot the covariance surface for errors
+  par(mfrow = c(1, 1))
+  contour(SigmaE, xlab = "Hour", ylab = "Hour", main = "Covariance Surface for Errors")
+  lines(c(0, 23), c(0, 23), lty = 4)
+  
+  # Plot the standard deviation of errors
+  stddevE <- sqrt(diag(SigmaE))
+  plot(hours_fine, stddevE, type = "l", xlab = "Hour", ylab = "Standard Deviation", main = "Standard Deviation of Errors")
+}
+```
+
+The following function enables to compute the cross product of the basis so that we can get the y2cMap values that will be used in the subsequent function.
+
+```{r}
+compute_y2cMap <- function(fd_obj, length_out = 200) {
+  # Extract the number of basis functions from the functional data object
+  nbasis <- fd_obj$fd$basis$nbasis
+  
+  # Define the basis functions for the regression
+  basis_range <- c(0, 23)  # Range of hours
+  basis <- create.fourier.basis(basis_range, nbasis)
+  
+  # Evaluate the basis functions at the time points used in your data
+  hours <- seq(0, 23, length.out = length_out)
+  basis_matrix <- eval.basis(hours, basis)
+  
+  # Compute the cross-product of the basis matrix
+  crossprod_basis <- crossprod(basis_matrix)
+  
+  # Solve for y2cMap
+  y2cMap <- solve(crossprod_basis, t(basis_matrix))
+  
+  return(y2cMap)
+}
+```
+
+
+This function enables us to compute and plot the standard errors of the regression coefficients so that we can eventually build our confidence interval for the estimated coefficents of the different seasosn. 
+```{r}
+compute_and_plot_standard_errors <- function(fRegressList, y2cMap, SigmaE, length_out = 200, name = "betastderrlist") {
+  # Compute the Standard Errors
+  stderrList <- fRegress.stderr(fRegressList, y2cMap, SigmaE)
+  
+  # Extract the Standard Errors
+  betastderrlist <- stderrList$betastderrlist
+  
+  # Define the time points for evaluation
+  hours_fine <- seq(0, 23, length.out = length_out)
+  
+  # Plot the standard errors of the regression coefficients
+  op <- par(mfrow = c(2, 3), pty = "s")
+  for (j in 1:length(betastderrlist)) {
+    betastderrj <- eval.fd(hours_fine, betastderrlist[[j]])
+    plot(hours_fine, betastderrj, type = "l", lty = 1, xlab = "Hour", ylab = "Reg. Coeff.", main = paste("Standard Error for", season_labels[j]))
+  }
+  par(op)
+  
+  # Assign the betastderrlist to the global environment with the specified name
+  assign(name, betastderrlist, envir = .GlobalEnv)
+  
+  # Return the betastderrlist
+  return(betastderrlist)
+}
+```
+
+This function enables us to plot the confidence limits of our estimated values. 
+
+```{r}
+plot_regression_with_confidence_limits <- function(betaestlist, betastderrlist, hours_fine, season_labels, length_out) {
+  hours_fine <- seq(0, 23, length.out = length_out)
+
+  # Plot the regression functions with confidence limits
+  op <- par(mfrow = c(3, 2))
+  for (j in 1:length(betaestlist)) {
+    betafdParj <- betaestlist[[j]]
+    betafdj <- betafdParj$fd
+    betaj <- eval.fd(hours_fine, betafdj)
+    betastderrj <- eval.fd(hours_fine, betastderrlist[[j]])
+    matplot(hours_fine, cbind(betaj, betaj + 2 * betastderrj, betaj - 2 * betastderrj), type = "l", lty = c(1, 4, 4), xlab = "Hour", ylab = "Reg. Coeff.", main = paste("Regression Coefficients with Confidence Limits for", season_labels[j]))
+    abline(h = 0, lty = 2)  # Add dashed line at zero
+  }
+  par(op)
+}
+```
+
+
+
+```{r}
+plot_regression_with_confidence_limits <- function(betaestlist, betastderrlist, hours_fine, season_labels, length_out) {
+  hours_fine <- seq(0, 23, length.out = length_out)
+
+  # Plot the regression functions with confidence limits
+  op <- par(mfrow = c(3, 2))
+  for (j in 1:length(betaestlist)) {
+    betafdParj <- betaestlist[[j]]
+    betafdj <- betafdParj$fd
+    betaj <- eval.fd(hours_fine, betafdj)
+    betastderrj <- eval.fd(hours_fine, betastderrlist[[j]])
+    matplot(hours_fine, cbind(betaj, betaj + 2 * betastderrj, betaj - 2 * betastderrj), type = "l", lty = c(1, 4, 4), xlab = "Hour", ylab = "Reg. Coeff.", main = paste("Regression Coefficients with Confidence Limits for", season_labels[j]))
+    abline(h = 0, lty = 2)  # Add dashed line at zero
+  }
+  par(op)
+}
+```
+
+
+Lastly, we need to evaluate the models by using the permutation test. In this function we must select the variables and for this project we selected to compare between winter and summer.
+
+```{r}
+# Example usage with functional data object
+perform_permutation_t_test <- function(fd_obj, winter_days, summer_days, season_1, season_2) {
+  # Extract the functional data from the functional object
+  bike_count <- fd_obj
+  
+  # Extract the functional data for Winter and Summer
+  winter_fd <- bike_count[winter_days]
+  summer_fd <- bike_count[summer_days]
+  
+  # Perform the permutation t-test between Winter and Summer
+  t_res <- tperm.fd(winter_fd, summer_fd, main = paste0(season_1 ," and " ,season_2))
+  
+  return(t_res)
+}
+```
+
+
+
+```{r}
+# Perform the regression, name the fRegress object, betaestlist, yhatfdobj, and store the modified bike_count
+unaligned_fANOVA <- perform_fANOVA(count_fd_opt_new, bike, "fANOVA_unaligned","xfdlist_unaligned", "betaestlist_unaligned", "yhatfdobj_unaligned", "unaligned_bike_count_fANOVA")
+
+# Compute the error metrics using the modified bike_count
+error_metrics_unaligned <- compute_error_metrics(unaligned_fANOVA$yhatfdobj, unaligned_bike_count_fANOVA, length_out = 200)
+
+# Plot the error metrics
+plot_error_metrics(error_metrics_unaligned$SigmaE, error_metrics_unaligned$hours_fine)
+
+
+# Compute y2cMap
+y2cMap_unaligned <- compute_y2cMap(count_fd_opt_new, length_out = 200)
+
+## Compute and plot standard errors
+compute_and_plot_standard_errors(unaligned_fANOVA$fRegressList, y2cMap_unaligned, error_metrics_unaligned$SigmaE, "betastderrlist_unaligned", length_out = 200)
+
+# Plot the regression functions with confidence limits
+plot_regression_with_confidence_limits(unaligned_fANOVA$betaestlist, betastderrlist_unaligned, hours_fine, c("Constant", "Winter", "Spring", "Summer", "Autumn"), length_out = 200)
+
+# Perform the permutation t-test between Winter and Summer
+t_test_unaligned <- perform_permutation_t_test(unaligned_bike_count_fANOVA,winter_days, summer_days, "Winter", "Summer")
+
+# Perform the permutation F-test for the regression
+F_test_fANOVA_unaligned <- Fperm.fd(unaligned_bike_count_fANOVA, xfdlist_unaligned, betaestlist_unaligned)
+
+```
+
+We also added a F-test for the regression to evaluate the significance  of our functional regression model. In order to assess what we found with respect to the constant term we can see that it is has peaks around the commute hours, specifically early in the morning and late in the afternoon. The constant terms represents the baseline bike rental demand with the different fluctuations occurring for different seasons. We can see bike rental in the Winter has negative influence on the bike rental demand with the coefficients being predominantly negative. During Spring we can see in the morning and in the late evenings the season has a negative influence on the bike rentals. On the other hand we can see that Autumn and Summer there is weather conditions do not deter the bike rental through the day, even though their influence at different times might be peak during different hours of the day. 
+
+
+When inspecting the confidence interval for the different seasons we can see that it is most narrow during the morning but then tends to widen later through the day. In terms of F-test we can see that the observed statistics is greater than maximum critical value meaning there observed difference between the different seasons os statistically significant. So this means that the observed difference has not occurred due to chance. We have also conducted a t-test for the different season of Winter and Summer and the results indicate that the observed statistics for t-test suggests there are differences in the bike rental pattern between winter and summer. 
+
+```{r}
+# Perform the regression, name the fRegress object, betaestlist, yhatfdobj, and store the modified bike_count
+aligned_fANOVA <- perform_fANOVA(aligned_fd_obj_count, bike, "fANOVA_aligned","xfdlist_aligned", "betaestlist_aligned", "yhatfdobj_aligned", "aligned_bike_count_fANOVA")
+
+# Compute the error metrics using the modified bike_count
+error_metrics_aligned <- compute_error_metrics(aligned_fANOVA$yhatfdobj, aligned_bike_count_fANOVA, length_out = 200)
+
+# Compute y2cMap
+y2cMap_aligned <- compute_y2cMap(aligned_fd_obj_count, length_out = 200)
+
+# Compute and plot standard errors
+compute_and_plot_standard_errors(aligned_fANOVA$fRegressList, y2cMap_aligned, error_metrics_aligned$SigmaE, "betastderrlist_aligned", length_out = 200)
+
+
+# Plot the regression functions with confidence limits
+plot_regression_with_confidence_limits(aligned_fANOVA$betaestlist, betastderrlist_aligned, hours_fine, c("Constant", "Winter", "Spring", "Summer", "Autumn"), length_out = 200)
+
+
+# Perform the permutation t-test between Winter and Summer
+t_test_results <- perform_permutation_t_test(aligned_bike_count_fANOVA, winter_days, summer_days, "Winter", "Summer")
+
+# Perform the permutation F-test for the regression
+F_test_fANOVA_unaligned <- Fperm.fd(aligned_bike_count_fANOVA, xfdlist_aligned, betaestlist_aligned)
+
+```
+
+
+
+
